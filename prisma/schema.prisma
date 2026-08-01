@@ -1,0 +1,580 @@
+// Transport Inquiry Platform — data model
+// See ../../PRD.md for the requirements this implements.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+// Prisma 7: the connection URL lives in prisma.config.ts, not here.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  SUPER_ADMIN
+  COMPANY_ADMIN
+  COMPANY_USER
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  DEACTIVATED
+}
+
+enum CompanyStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum ConnectionStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+enum NotificationPreference {
+  INSTANT
+  DAILY_DIGEST
+}
+
+enum WeightUom {
+  KG
+  LB
+}
+
+enum InquiryStatus {
+  DRAFT
+  SUBMITTED
+  VEHICLE_PROVIDED
+  DECLINED
+  CANCELLED
+  COMPLETED
+}
+
+enum Priority {
+  NORMAL
+  URGENT
+}
+
+enum PackagingType {
+  PALLET
+  CARTON
+  CRATE
+  DRUM
+  BAG
+  LOOSE
+  CONTAINER
+  OTHER
+}
+
+enum VehicleType {
+  VAN
+  LORRY_SMALL
+  LORRY_MEDIUM
+  LORRY_LARGE
+  FLATBED
+  TRAILER
+  CONTAINER_20
+  CONTAINER_40
+  REEFER
+  OTHER
+}
+
+/// TO is derived (creator + counterparty primary contact); CC/CC are added by hand.
+enum RecipientType {
+  TO
+  CC
+  BCC
+}
+
+enum RecipientKind {
+  USER
+  EXTERNAL
+}
+
+enum TimelineEventType {
+  INQUIRY_CREATED
+  INQUIRY_SUBMITTED
+  INQUIRY_AMENDED
+  VEHICLE_PROVIDED
+  VEHICLE_UPDATED
+  INQUIRY_DECLINED
+  INQUIRY_RESUBMITTED
+  INQUIRY_CANCELLED
+  INQUIRY_COMPLETED
+  COMMENT_ADDED
+  INBOUND_REPLY
+  RECIPIENT_ADDED
+  RECIPIENT_REMOVED
+  ATTACHMENT_ADDED
+}
+
+enum EmailEventType {
+  INQUIRY_SUBMITTED
+  INQUIRY_AMENDED
+  VEHICLE_PROVIDED
+  VEHICLE_UPDATED
+  INQUIRY_DECLINED
+  INQUIRY_RESUBMITTED
+  INQUIRY_CANCELLED
+  INQUIRY_COMPLETED
+  COMMENT_ADDED
+  INBOUND_REPLY
+  RECIPIENT_ADDED
+  NO_RESPONSE_REMINDER
+  DAILY_DIGEST
+  USER_INVITED
+  COMPANY_INVITED
+  PASSWORD_RESET
+}
+
+/// Doubles as the outbox state machine: QUEUED rows are picked up by the sender job.
+enum EmailStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  BOUNCED
+  COMPLAINED
+  FAILED
+}
+
+enum InboundEmailStatus {
+  PROCESSED
+  QUARANTINED
+  DISCARDED
+}
+
+enum CommentSource {
+  APP
+  EMAIL
+}
+
+enum InvitationType {
+  USER
+  COMPANY
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+model Company {
+  id                  String        @id @default(uuid())
+  name                String
+  registrationNumber  String?
+  addressLine         String
+  country             String
+  primaryContactName  String
+  primaryContactEmail String
+  primaryContactPhone String
+  logoUrl             String?
+  timezone            String        @default("UTC")
+  defaultWeightUom    WeightUom     @default(KG)
+  status              CompanyStatus @default(PENDING)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  users              User[]
+  connectionsInitiated Connection[] @relation("ConnectionCompanyA")
+  connectionsReceived  Connection[] @relation("ConnectionCompanyB")
+  requestedInquiries Inquiry[]      @relation("RequesterCompany")
+  providedInquiries  Inquiry[]      @relation("ProviderCompany")
+  invitations        Invitation[]
+  auditEvents        AuditEvent[]
+
+  @@index([status])
+}
+
+model User {
+  id                     String                 @id @default(uuid())
+  email                  String                 @unique
+  fullName               String
+  phone                  String?
+  passwordHash           String?
+  role                   UserRole
+  status                 UserStatus             @default(INVITED)
+  notificationPreference NotificationPreference @default(INSTANT)
+  companyId              String?
+  lastLoginAt            DateTime?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  refreshTokens      RefreshToken[]
+  createdInquiries   Inquiry[]      @relation("InquiryCreatedBy")
+  completedInquiries Inquiry[]      @relation("InquiryCompletedBy")
+  vehicleDetails     VehicleDetail[]
+  comments           Comment[]
+  attachments        Attachment[]
+  timelineEvents     TimelineEvent[]
+  recipientEntries   Recipient[]    @relation("RecipientUser")
+  recipientsAdded    Recipient[]    @relation("RecipientAddedBy")
+  invitationsSent    Invitation[]   @relation("InvitationInvitedBy")
+  auditEvents        AuditEvent[]
+
+  @@index([companyId, status])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Undirected link between two companies. companyAId is always the lexicographically
+/// smaller id so that (A,B) and (B,A) cannot both exist — see Rule C3.
+model Connection {
+  id              String           @id @default(uuid())
+  companyAId      String
+  companyBId      String
+  status          ConnectionStatus @default(INVITED)
+  invitedByUserId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  companyA Company @relation("ConnectionCompanyA", fields: [companyAId], references: [id], onDelete: Cascade)
+  companyB Company @relation("ConnectionCompanyB", fields: [companyBId], references: [id], onDelete: Cascade)
+
+  @@unique([companyAId, companyBId])
+  @@index([companyBId])
+}
+
+// ---------------------------------------------------------------------------
+// Inquiries
+// ---------------------------------------------------------------------------
+
+model Inquiry {
+  id     String        @id @default(uuid())
+  number String        @unique
+  status InquiryStatus @default(DRAFT)
+
+  requesterCompanyId String
+  providerCompanyId  String
+  createdByUserId    String
+
+  // Route
+  pickupLocation       String
+  pickupContactName    String
+  pickupContactPhone   String
+  deliveryLocation     String
+  deliveryContactName  String
+  deliveryContactPhone String
+
+  // Timing
+  readyByAt    DateTime
+  requiredByAt DateTime
+
+  // Cargo
+  cargoDescription String
+  packageCount     Int
+  grossWeight      Decimal        @db.Decimal(12, 3)
+  weightUom        WeightUom      @default(KG)
+  volumeCbm        Decimal?       @db.Decimal(12, 3)
+  dimensions       String?
+  packagingType    PackagingType?
+
+  // Vehicle & reference
+  requestedVehicleType VehicleType?
+  referenceNumber      String?
+  priority             Priority     @default(NORMAL)
+  specialHandlingNotes String?
+
+  declineReason String?
+
+  /// Stable root Message-ID; every email in this thread References it. Never changes.
+  rootMessageId String @unique
+  /// Frozen at submission — mutating it fragments the mail thread.
+  subjectLine   String
+
+  submittedAt       DateTime?
+  declinedAt        DateTime?
+  cancelledAt       DateTime?
+  completedAt       DateTime?
+  completedByUserId String?
+  lastReminderAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requesterCompany Company @relation("RequesterCompany", fields: [requesterCompanyId], references: [id], onDelete: Restrict)
+  providerCompany  Company @relation("ProviderCompany", fields: [providerCompanyId], references: [id], onDelete: Restrict)
+  createdBy        User    @relation("InquiryCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  completedBy      User?   @relation("InquiryCompletedBy", fields: [completedByUserId], references: [id], onDelete: Restrict)
+
+  vehicleDetails VehicleDetail[]
+  recipients     Recipient[]
+  comments       Comment[]
+  attachments    Attachment[]
+  timeline       TimelineEvent[]
+  emails         EmailMessage[]
+  inboundEmails  InboundEmail[]
+  auditEvents    AuditEvent[]
+
+  @@index([requesterCompanyId, status, createdAt])
+  @@index([providerCompanyId, status, createdAt])
+  @@index([status, submittedAt])
+  @@index([referenceNumber])
+}
+
+/// Versioned and never overwritten — "which vehicle did we say at 4pm yesterday"
+/// has real operational value. See Rule VD1.
+model VehicleDetail {
+  id                String      @id @default(uuid())
+  inquiryId         String
+  version           Int
+  vehicleNumber     String
+  vehicleType       VehicleType
+  transporterName   String?
+  driverName        String
+  driverPhone       String
+  expectedPickupAt  DateTime
+  notes             String?
+  createdByUserId   String
+  createdAt         DateTime    @default(now())
+
+  inquiry   Inquiry      @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  createdBy User         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  attachments Attachment[]
+
+  @@unique([inquiryId, version])
+  @@index([vehicleNumber])
+}
+
+/// A person on the inquiry's mail thread. May or may not be a platform user.
+model Recipient {
+  id              String        @id @default(uuid())
+  inquiryId       String
+  type            RecipientType
+  kind            RecipientKind
+  email           String
+  name            String?
+  userId          String?
+  /// Company that added them — drives Rule R4 (neither side sees the other's list).
+  addedByCompanyId String
+  addedByUserId    String?
+  removedAt        DateTime?
+  createdAt        DateTime      @default(now())
+
+  inquiry   Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  user      User?   @relation("RecipientUser", fields: [userId], references: [id], onDelete: SetNull)
+  addedBy   User?   @relation("RecipientAddedBy", fields: [addedByUserId], references: [id], onDelete: SetNull)
+
+  inboundEmails InboundEmail[]
+
+  @@unique([inquiryId, email])
+  @@index([inquiryId, type])
+}
+
+model Comment {
+  id          String        @id @default(uuid())
+  inquiryId   String
+  body        String
+  source      CommentSource @default(APP)
+  isExternal  Boolean       @default(false)
+  authorUserId String?
+  authorEmail  String?
+  authorName   String?
+  createdAt    DateTime      @default(now())
+
+  inquiry     Inquiry        @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  author      User?          @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
+  attachments Attachment[]
+  inboundEmail InboundEmail?
+
+  @@index([inquiryId, createdAt])
+}
+
+model Attachment {
+  id              String   @id @default(uuid())
+  inquiryId       String
+  commentId       String?
+  vehicleDetailId String?
+  filename        String
+  mimeType        String
+  sizeBytes       Int
+  storageKey      String
+  uploadedByUserId String?
+  createdAt       DateTime @default(now())
+
+  inquiry       Inquiry        @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  comment       Comment?       @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  vehicleDetail VehicleDetail? @relation(fields: [vehicleDetailId], references: [id], onDelete: Cascade)
+  uploadedBy    User?          @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([inquiryId])
+}
+
+/// The chronological feed that replaces the email thread in the UI.
+model TimelineEvent {
+  id          String            @id @default(uuid())
+  inquiryId   String
+  type        TimelineEventType
+  actorUserId String?
+  actorName   String
+  payload     Json?
+  createdAt   DateTime          @default(now())
+
+  inquiry Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  actor   User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([inquiryId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Email
+// ---------------------------------------------------------------------------
+
+/// Outbox row and delivery log in one. QUEUED rows are picked up by the sender job.
+model EmailMessage {
+  id                String         @id @default(uuid())
+  inquiryId         String?
+  eventType         EmailEventType
+  subject           String
+  bodyHtml          String
+  bodyText          String
+  fromAddress       String
+  messageId         String         @unique
+  inReplyTo         String?
+  references        String?
+  status            EmailStatus    @default(QUEUED)
+  attempts          Int            @default(0)
+  lastError         String?
+  providerMessageId String?
+  scheduledAt       DateTime       @default(now())
+  sentAt            DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  inquiry    Inquiry?        @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  recipients EmailRecipient[]
+
+  @@index([status, scheduledAt])
+  @@index([inquiryId, createdAt])
+}
+
+model EmailRecipient {
+  id             String        @id @default(uuid())
+  emailMessageId String
+  type           RecipientType
+  email          String
+  name           String?
+  userId         String?
+  /// Tokenised per-recipient reply address: inq+{inquiryId}.{token}@mail.domain
+  replyToAddress String
+  status         EmailStatus   @default(QUEUED)
+  deliveredAt    DateTime?
+  bouncedAt      DateTime?
+
+  emailMessage EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@index([emailMessageId])
+  @@index([email])
+}
+
+/// Nothing unverified is ever auto-posted to a timeline — see §6.4.
+model InboundEmail {
+  id               String             @id @default(uuid())
+  inquiryId        String?
+  recipientId      String?
+  fromAddress      String
+  fromName         String?
+  subject          String?
+  rawMessageId     String?
+  inReplyTo        String?
+  bodyText         String
+  strippedText     String?
+  status           InboundEmailStatus
+  quarantineReason String?
+  commentId        String?            @unique
+  receivedAt       DateTime           @default(now())
+  processedAt      DateTime?
+
+  inquiry   Inquiry?   @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  recipient Recipient? @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+  comment   Comment?   @relation(fields: [commentId], references: [id], onDelete: SetNull)
+
+  @@index([status, receivedAt])
+}
+
+model SuppressedEmail {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  reason    String
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Supporting
+// ---------------------------------------------------------------------------
+
+model Invitation {
+  id                 String           @id @default(uuid())
+  type               InvitationType
+  email              String
+  tokenHash          String           @unique
+  status             InvitationStatus @default(PENDING)
+  companyId          String?
+  invitedCompanyName String?
+  role               UserRole?
+  invitedByUserId    String?
+  expiresAt          DateTime
+  acceptedAt         DateTime?
+  createdAt          DateTime         @default(now())
+
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invitedBy User?    @relation("InvitationInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([email, status])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid())
+  companyId   String?
+  inquiryId   String?
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String
+  before      Json?
+  after       Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  inquiry Inquiry? @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  actor   User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([inquiryId, createdAt])
+  @@index([companyId, createdAt])
+  @@index([entityType, entityId])
+}
+
+/// Backs the INQ-{YYYY}-{NNNN} numbering.
+model InquirySequence {
+  year       Int @id
+  lastNumber Int @default(0)
+}

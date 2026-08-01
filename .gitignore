@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/coverage/
+coverage/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Generated Prisma client — recreated by `pnpm db:generate`
+src/generated/
+
+# Local attachment storage
+storage/
+
+# Editor / OS
+.DS_Store
+*.log
+.idea/
+.vscode/
