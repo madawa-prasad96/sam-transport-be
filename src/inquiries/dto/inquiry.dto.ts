@@ -1,7 +1,11 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsDateString,
+  IsEmail,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -12,6 +16,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import {
   InquiryStatus,
@@ -21,9 +26,35 @@ import {
   WeightUom,
 } from '../../generated/prisma/enums';
 
+/** A CC or BCC set at creation time, so the very first email already carries them. */
+export class InquiryRecipientDto {
+  @IsEmail({}, { message: 'Enter a valid email address' })
+  email!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  name?: string;
+
+  @IsIn(['CC', 'BCC'], { message: 'Type must be CC or BCC' })
+  type!: 'CC' | 'BCC';
+}
+
 export class CreateInquiryDto {
   @IsUUID()
   providerCompanyId!: string;
+
+  /**
+   * Copied recipients. They are attached while the inquiry is still a draft, so
+   * nothing is sent until submission — and then the submission email includes
+   * them, rather than them missing the one email that matters most.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(25)
+  @ValidateNested({ each: true })
+  @Type(() => InquiryRecipientDto)
+  recipients?: InquiryRecipientDto[];
 
   // Route
   @IsString() @IsNotEmpty() @MaxLength(500) pickupLocation!: string;

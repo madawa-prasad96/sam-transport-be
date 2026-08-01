@@ -20,6 +20,7 @@ import { MailService } from '../mail/mail.service';
 import { MailTokenService } from '../mail/mail-token.service';
 import type { DetailRow } from '../mail/templates/layout';
 import { PrismaService } from '../prisma/prisma.service';
+import { RecipientsService } from './recipients.service';
 import type {
   CreateCommentDto,
   CreateInquiryDto,
@@ -52,6 +53,7 @@ export class InquiriesService {
     private readonly tokens: MailTokenService,
     private readonly audit: AuditService,
     private readonly connections: ConnectionsService,
+    private readonly recipients: RecipientsService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -274,6 +276,11 @@ export class InquiriesService {
     );
     this.assertTimingSane(dto.readyByAt, dto.requiredByAt);
 
+    // Validate copied recipients before creating anything. Attaching them after
+    // the fact and failing halfway would leave a half-configured inquiry behind.
+    const copies = this.normaliseRecipients(dto.recipients);
+    await this.assertRecipientsSendable(copies.map((r) => r.email));
+
     const inquiry = await this.prisma.$transaction(async (tx) => {
       const number = await this.nextNumber(tx);
       const created = await tx.inquiry.create({
@@ -318,8 +325,19 @@ export class InquiriesService {
       });
     });
 
+    // Safe to attach now: the inquiry is a DRAFT, so adding recipients sends no
+    // email. They are simply on the list when the submission email goes out.
+    for (const copy of copies) {
+      await this.recipients.add(user, inquiry.id, {
+        email: copy.email,
+        name: copy.name,
+        type: copy.type as RecipientType,
+      });
+    }
+
     await this.recordEvent(inquiry.id, TimelineEventType.INQUIRY_CREATED, user, {
       number: inquiry.number,
+      copiedRecipients: copies.length,
     });
     await this.audit.record({
       action: 'inquiry.created',
@@ -835,6 +853,39 @@ export class InquiriesService {
         },
         update: { removedAt: null },
       });
+    }
+  }
+
+  /** Lower-cases, trims and de-duplicates, keeping the first mention of an address. */
+  private normaliseRecipients(
+    input: { email: string; name?: string; type: 'CC' | 'BCC' }[] | undefined,
+  ) {
+    const seen = new Set<string>();
+    const result: { email: string; name?: string; type: 'CC' | 'BCC' }[] = [];
+
+    for (const entry of input ?? []) {
+      const email = entry.email.toLowerCase().trim();
+      if (!email || seen.has(email)) continue;
+      seen.add(email);
+      result.push({ email, name: entry.name?.trim() || undefined, type: entry.type });
+    }
+    return result;
+  }
+
+  private async assertRecipientsSendable(emails: string[]): Promise<void> {
+    if (emails.length === 0) return;
+
+    const suppressed = await this.prisma.suppressedEmail.findMany({
+      where: { email: { in: emails } },
+      select: { email: true, reason: true },
+    });
+
+    if (suppressed.length > 0) {
+      throw new BadRequestException(
+        `Mail to these addresses has been failing, so they cannot be copied: ${suppressed
+          .map((row) => `${row.email} (${row.reason})`)
+          .join(', ')}`,
+      );
     }
   }
 
