@@ -12,7 +12,15 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const config = app.get(ConfigService);
 
-  app.use(helmet());
+  app.use(
+    helmet({
+      // This is a JSON API consumed by the web app on a different origin, so
+      // helmet's default same-origin resource policy is the wrong default here.
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      // CSP protects documents; nothing is served from this origin.
+      contentSecurityPolicy: false,
+    }),
+  );
   app.use(cookieParser());
   app.setGlobalPrefix('api');
   app.enableCors({
