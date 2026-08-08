@@ -17,9 +17,11 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 enum UserRole {
-  SUPER_ADMIN
-  COMPANY_ADMIN
-  COMPANY_USER
+  /// SAM-wide administrator: manages units and every user, sees all inquiries.
+  ORG_ADMIN
+  /// Manages their own unit's users and profile.
+  UNIT_ADMIN
+  UNIT_USER
 }
 
 enum UserStatus {
@@ -28,17 +30,9 @@ enum UserStatus {
   DEACTIVATED
 }
 
-enum CompanyStatus {
-  PENDING
+enum UnitStatus {
   ACTIVE
-  SUSPENDED
-}
-
-enum ConnectionStatus {
-  INVITED
-  ACTIVE
-  SUSPENDED
-  REJECTED
+  INACTIVE
 }
 
 enum NotificationPreference {
@@ -133,7 +127,6 @@ enum EmailEventType {
   NO_RESPONSE_REMINDER
   DAILY_DIGEST
   USER_INVITED
-  COMPANY_INVITED
   PASSWORD_RESET
 }
 
@@ -158,11 +151,6 @@ enum CommentSource {
   EMAIL
 }
 
-enum InvitationType {
-  USER
-  COMPANY
-}
-
 enum InvitationStatus {
   PENDING
   ACCEPTED
@@ -174,9 +162,13 @@ enum InvitationStatus {
 // Tenancy
 // ---------------------------------------------------------------------------
 
-model Company {
-  id                  String        @id @default(uuid())
+/// A SAM business unit: a plant, a department, or an internally-named entity
+/// such as "SAM Lotus". Deliberately untyped — one record covers all of them.
+model Unit {
+  id                  String     @id @default(uuid())
   name                String
+  /// Short internal code, e.g. LOTUS, DIENDRA. Handy on lists and filters.
+  code                String     @unique
   registrationNumber  String?
   addressLine         String
   country             String
@@ -184,17 +176,15 @@ model Company {
   primaryContactEmail String
   primaryContactPhone String
   logoUrl             String?
-  timezone            String        @default("UTC")
-  defaultWeightUom    WeightUom     @default(KG)
-  status              CompanyStatus @default(PENDING)
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  timezone            String     @default("UTC")
+  defaultWeightUom    WeightUom  @default(KG)
+  status              UnitStatus @default(ACTIVE)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
 
   users              User[]
-  connectionsInitiated Connection[] @relation("ConnectionCompanyA")
-  connectionsReceived  Connection[] @relation("ConnectionCompanyB")
-  requestedInquiries Inquiry[]      @relation("RequesterCompany")
-  providedInquiries  Inquiry[]      @relation("ProviderCompany")
+  requestedInquiries Inquiry[]    @relation("RequesterUnit")
+  providedInquiries  Inquiry[]    @relation("ProviderUnit")
   invitations        Invitation[]
   auditEvents        AuditEvent[]
 
@@ -210,26 +200,28 @@ model User {
   role                   UserRole
   status                 UserStatus             @default(INVITED)
   notificationPreference NotificationPreference @default(INSTANT)
-  companyId              String?
+  /// Every user belongs to a unit, including ORG_ADMIN — an org admin is a SAM
+  /// employee at a real site who can raise inquiries like anyone else.
+  unitId                 String
   lastLoginAt            DateTime?
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
 
-  company Company? @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  unit Unit @relation(fields: [unitId], references: [id], onDelete: Restrict)
 
   refreshTokens      RefreshToken[]
-  createdInquiries   Inquiry[]      @relation("InquiryCreatedBy")
-  completedInquiries Inquiry[]      @relation("InquiryCompletedBy")
+  createdInquiries   Inquiry[]       @relation("InquiryCreatedBy")
+  completedInquiries Inquiry[]       @relation("InquiryCompletedBy")
   vehicleDetails     VehicleDetail[]
   comments           Comment[]
   attachments        Attachment[]
   timelineEvents     TimelineEvent[]
-  recipientEntries   Recipient[]    @relation("RecipientUser")
-  recipientsAdded    Recipient[]    @relation("RecipientAddedBy")
-  invitationsSent    Invitation[]   @relation("InvitationInvitedBy")
+  recipientEntries   Recipient[]     @relation("RecipientUser")
+  recipientsAdded    Recipient[]     @relation("RecipientAddedBy")
+  invitationsSent    Invitation[]    @relation("InvitationInvitedBy")
   auditEvents        AuditEvent[]
 
-  @@index([companyId, status])
+  @@index([unitId, status])
 }
 
 model RefreshToken {
@@ -245,24 +237,6 @@ model RefreshToken {
   @@index([userId])
 }
 
-/// Undirected link between two companies. companyAId is always the lexicographically
-/// smaller id so that (A,B) and (B,A) cannot both exist — see Rule C3.
-model Connection {
-  id              String           @id @default(uuid())
-  companyAId      String
-  companyBId      String
-  status          ConnectionStatus @default(INVITED)
-  invitedByUserId String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-
-  companyA Company @relation("ConnectionCompanyA", fields: [companyAId], references: [id], onDelete: Cascade)
-  companyB Company @relation("ConnectionCompanyB", fields: [companyBId], references: [id], onDelete: Cascade)
-
-  @@unique([companyAId, companyBId])
-  @@index([companyBId])
-}
-
 // ---------------------------------------------------------------------------
 // Inquiries
 // ---------------------------------------------------------------------------
@@ -272,8 +246,8 @@ model Inquiry {
   number String        @unique
   status InquiryStatus @default(DRAFT)
 
-  requesterCompanyId String
-  providerCompanyId  String
+  requesterUnitId String
+  providerUnitId  String
   createdByUserId    String
 
   // Route
@@ -320,8 +294,8 @@ model Inquiry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  requesterCompany Company @relation("RequesterCompany", fields: [requesterCompanyId], references: [id], onDelete: Restrict)
-  providerCompany  Company @relation("ProviderCompany", fields: [providerCompanyId], references: [id], onDelete: Restrict)
+  requesterUnit Unit @relation("RequesterUnit", fields: [requesterUnitId], references: [id], onDelete: Restrict)
+  providerUnit  Unit @relation("ProviderUnit", fields: [providerUnitId], references: [id], onDelete: Restrict)
   createdBy        User    @relation("InquiryCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   completedBy      User?   @relation("InquiryCompletedBy", fields: [completedByUserId], references: [id], onDelete: Restrict)
 
@@ -334,8 +308,8 @@ model Inquiry {
   inboundEmails  InboundEmail[]
   auditEvents    AuditEvent[]
 
-  @@index([requesterCompanyId, status, createdAt])
-  @@index([providerCompanyId, status, createdAt])
+  @@index([requesterUnitId, status, createdAt])
+  @@index([providerUnitId, status, createdAt])
   @@index([status, submittedAt])
   @@index([referenceNumber])
 }
@@ -373,8 +347,8 @@ model Recipient {
   email           String
   name            String?
   userId          String?
-  /// Company that added them — drives Rule R4 (neither side sees the other's list).
-  addedByCompanyId String
+  /// Unit that added them — a unit manages its own copy list.
+  addedByUnitId    String
   addedByUserId    String?
   removedAt        DateTime?
   createdAt        DateTime      @default(now())
@@ -531,29 +505,28 @@ model SuppressedEmail {
 // Supporting
 // ---------------------------------------------------------------------------
 
+/// Only user invitations remain: units are created directly by an org admin.
 model Invitation {
-  id                 String           @id @default(uuid())
-  type               InvitationType
-  email              String
-  tokenHash          String           @unique
-  status             InvitationStatus @default(PENDING)
-  companyId          String?
-  invitedCompanyName String?
-  role               UserRole?
-  invitedByUserId    String?
-  expiresAt          DateTime
-  acceptedAt         DateTime?
-  createdAt          DateTime         @default(now())
+  id              String           @id @default(uuid())
+  email           String
+  tokenHash       String           @unique
+  status          InvitationStatus @default(PENDING)
+  unitId          String
+  role            UserRole
+  invitedByUserId String?
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime         @default(now())
 
-  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  invitedBy User?    @relation("InvitationInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  unit      Unit  @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  invitedBy User? @relation("InvitationInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
 
   @@index([email, status])
 }
 
 model AuditEvent {
   id          String   @id @default(uuid())
-  companyId   String?
+  unitId      String?
   inquiryId   String?
   actorUserId String?
   action      String
@@ -564,12 +537,12 @@ model AuditEvent {
   ipAddress   String?
   createdAt   DateTime @default(now())
 
-  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  unit    Unit?    @relation(fields: [unitId], references: [id], onDelete: SetNull)
   inquiry Inquiry? @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
   actor   User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([inquiryId, createdAt])
-  @@index([companyId, createdAt])
+  @@index([unitId, createdAt])
   @@index([entityType, entityId])
 }
 

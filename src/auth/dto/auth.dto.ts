@@ -31,23 +31,6 @@ export class AcceptInvitationDto {
   @IsOptional()
   @IsString()
   phone?: string;
-
-  // Only used when accepting a COMPANY invitation — completes the company profile.
-  @IsOptional()
-  @IsString()
-  companyName?: string;
-
-  @IsOptional()
-  @IsString()
-  addressLine?: string;
-
-  @IsOptional()
-  @IsString()
-  country?: string;
-
-  @IsOptional()
-  @IsString()
-  primaryContactPhone?: string;
 }
 
 export class ChangePasswordDto {

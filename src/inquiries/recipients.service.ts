@@ -31,8 +31,8 @@ export class RecipientsService {
   ) {}
 
   async add(user: AuthUser, inquiryId: string, input: AddRecipientInput) {
-    const companyId = user.companyId!;
-    const inquiry = await this.requireAccess(companyId, inquiryId);
+    const unitId = user.unitId!;
+    const inquiry = await this.requireAccess(unitId, inquiryId);
 
     if (input.type === RecipientType.TO) {
       throw new BadRequestException(
@@ -75,7 +75,7 @@ export class RecipientsService {
             kind: linkedUser ? RecipientKind.USER : RecipientKind.EXTERNAL,
             userId: linkedUser?.id ?? null,
             name: input.name ?? linkedUser?.fullName ?? null,
-            addedByCompanyId: companyId,
+            addedByUnitId: unitId,
             addedByUserId: user.id,
           },
         })
@@ -87,7 +87,7 @@ export class RecipientsService {
             email,
             name: input.name ?? linkedUser?.fullName ?? null,
             userId: linkedUser?.id ?? null,
-            addedByCompanyId: companyId,
+            addedByUnitId: unitId,
             addedByUserId: user.id,
           },
         });
@@ -99,7 +99,7 @@ export class RecipientsService {
       entityType: 'Recipient',
       entityId: recipient.id,
       actorUserId: user.id,
-      companyId,
+      unitId,
       inquiryId,
       after: { email, type: input.type, kind: recipient.kind },
     });
@@ -139,8 +139,8 @@ export class RecipientsService {
   }
 
   async remove(user: AuthUser, inquiryId: string, recipientId: string) {
-    const companyId = user.companyId!;
-    await this.requireAccess(companyId, inquiryId);
+    const unitId = user.unitId!;
+    await this.requireAccess(unitId, inquiryId);
 
     const recipient = await this.prisma.recipient.findFirst({
       where: { id: recipientId, inquiryId },
@@ -148,9 +148,9 @@ export class RecipientsService {
     if (!recipient) throw new NotFoundException('Recipient not found');
 
     // Rule R4 — each company manages only its own side of the list.
-    if (recipient.addedByCompanyId !== companyId) {
+    if (recipient.addedByUnitId !== unitId) {
       throw new ForbiddenException(
-        'Only the company that added this recipient can remove them',
+        'Only the unit that added this recipient can remove them',
       );
     }
     if (recipient.type === RecipientType.TO) {
@@ -169,7 +169,7 @@ export class RecipientsService {
       entityType: 'Recipient',
       entityId: recipientId,
       actorUserId: user.id,
-      companyId,
+      unitId,
       inquiryId,
       before: { email: recipient.email, type: recipient.type },
     });
@@ -189,14 +189,14 @@ export class RecipientsService {
     return updated;
   }
 
-  private async requireAccess(companyId: string, inquiryId: string) {
+  private async requireAccess(unitId: string, inquiryId: string) {
     const inquiry = await this.prisma.inquiry.findFirst({
       where: {
         id: inquiryId,
         OR: [
-          { requesterCompanyId: companyId },
+          { requesterUnitId: unitId },
           {
-            providerCompanyId: companyId,
+            providerUnitId: unitId,
             status: { not: InquiryStatus.DRAFT },
           },
         ],

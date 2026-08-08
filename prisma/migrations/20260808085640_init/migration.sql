@@ -1,14 +1,11 @@
 -- CreateEnum
-CREATE TYPE "UserRole" AS ENUM ('SUPER_ADMIN', 'COMPANY_ADMIN', 'COMPANY_USER');
+CREATE TYPE "UserRole" AS ENUM ('ORG_ADMIN', 'UNIT_ADMIN', 'UNIT_USER');
 
 -- CreateEnum
 CREATE TYPE "UserStatus" AS ENUM ('INVITED', 'ACTIVE', 'DEACTIVATED');
 
 -- CreateEnum
-CREATE TYPE "CompanyStatus" AS ENUM ('PENDING', 'ACTIVE', 'SUSPENDED');
-
--- CreateEnum
-CREATE TYPE "ConnectionStatus" AS ENUM ('INVITED', 'ACTIVE', 'SUSPENDED', 'REJECTED');
+CREATE TYPE "UnitStatus" AS ENUM ('ACTIVE', 'INACTIVE');
 
 -- CreateEnum
 CREATE TYPE "NotificationPreference" AS ENUM ('INSTANT', 'DAILY_DIGEST');
@@ -38,7 +35,7 @@ CREATE TYPE "RecipientKind" AS ENUM ('USER', 'EXTERNAL');
 CREATE TYPE "TimelineEventType" AS ENUM ('INQUIRY_CREATED', 'INQUIRY_SUBMITTED', 'INQUIRY_AMENDED', 'VEHICLE_PROVIDED', 'VEHICLE_UPDATED', 'INQUIRY_DECLINED', 'INQUIRY_RESUBMITTED', 'INQUIRY_CANCELLED', 'INQUIRY_COMPLETED', 'COMMENT_ADDED', 'INBOUND_REPLY', 'RECIPIENT_ADDED', 'RECIPIENT_REMOVED', 'ATTACHMENT_ADDED');
 
 -- CreateEnum
-CREATE TYPE "EmailEventType" AS ENUM ('INQUIRY_SUBMITTED', 'INQUIRY_AMENDED', 'VEHICLE_PROVIDED', 'VEHICLE_UPDATED', 'INQUIRY_DECLINED', 'INQUIRY_RESUBMITTED', 'INQUIRY_CANCELLED', 'INQUIRY_COMPLETED', 'COMMENT_ADDED', 'INBOUND_REPLY', 'RECIPIENT_ADDED', 'NO_RESPONSE_REMINDER', 'DAILY_DIGEST', 'USER_INVITED', 'COMPANY_INVITED', 'PASSWORD_RESET');
+CREATE TYPE "EmailEventType" AS ENUM ('INQUIRY_SUBMITTED', 'INQUIRY_AMENDED', 'VEHICLE_PROVIDED', 'VEHICLE_UPDATED', 'INQUIRY_DECLINED', 'INQUIRY_RESUBMITTED', 'INQUIRY_CANCELLED', 'INQUIRY_COMPLETED', 'COMMENT_ADDED', 'INBOUND_REPLY', 'RECIPIENT_ADDED', 'NO_RESPONSE_REMINDER', 'DAILY_DIGEST', 'USER_INVITED', 'PASSWORD_RESET');
 
 -- CreateEnum
 CREATE TYPE "EmailStatus" AS ENUM ('QUEUED', 'SENT', 'DELIVERED', 'BOUNCED', 'COMPLAINED', 'FAILED');
@@ -50,15 +47,13 @@ CREATE TYPE "InboundEmailStatus" AS ENUM ('PROCESSED', 'QUARANTINED', 'DISCARDED
 CREATE TYPE "CommentSource" AS ENUM ('APP', 'EMAIL');
 
 -- CreateEnum
-CREATE TYPE "InvitationType" AS ENUM ('USER', 'COMPANY');
-
--- CreateEnum
 CREATE TYPE "InvitationStatus" AS ENUM ('PENDING', 'ACCEPTED', 'EXPIRED', 'REVOKED');
 
 -- CreateTable
-CREATE TABLE "Company" (
+CREATE TABLE "Unit" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
+    "code" TEXT NOT NULL,
     "registrationNumber" TEXT,
     "addressLine" TEXT NOT NULL,
     "country" TEXT NOT NULL,
@@ -68,11 +63,11 @@ CREATE TABLE "Company" (
     "logoUrl" TEXT,
     "timezone" TEXT NOT NULL DEFAULT 'UTC',
     "defaultWeightUom" "WeightUom" NOT NULL DEFAULT 'KG',
-    "status" "CompanyStatus" NOT NULL DEFAULT 'PENDING',
+    "status" "UnitStatus" NOT NULL DEFAULT 'ACTIVE',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "Company_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "Unit_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -85,7 +80,7 @@ CREATE TABLE "User" (
     "role" "UserRole" NOT NULL,
     "status" "UserStatus" NOT NULL DEFAULT 'INVITED',
     "notificationPreference" "NotificationPreference" NOT NULL DEFAULT 'INSTANT',
-    "companyId" TEXT,
+    "unitId" TEXT NOT NULL,
     "lastLoginAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -106,25 +101,12 @@ CREATE TABLE "RefreshToken" (
 );
 
 -- CreateTable
-CREATE TABLE "Connection" (
-    "id" TEXT NOT NULL,
-    "companyAId" TEXT NOT NULL,
-    "companyBId" TEXT NOT NULL,
-    "status" "ConnectionStatus" NOT NULL DEFAULT 'INVITED',
-    "invitedByUserId" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "Connection_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "Inquiry" (
     "id" TEXT NOT NULL,
     "number" TEXT NOT NULL,
     "status" "InquiryStatus" NOT NULL DEFAULT 'DRAFT',
-    "requesterCompanyId" TEXT NOT NULL,
-    "providerCompanyId" TEXT NOT NULL,
+    "requesterUnitId" TEXT NOT NULL,
+    "providerUnitId" TEXT NOT NULL,
     "createdByUserId" TEXT NOT NULL,
     "pickupLocation" TEXT NOT NULL,
     "pickupContactName" TEXT NOT NULL,
@@ -187,7 +169,7 @@ CREATE TABLE "Recipient" (
     "email" TEXT NOT NULL,
     "name" TEXT,
     "userId" TEXT,
-    "addedByCompanyId" TEXT NOT NULL,
+    "addedByUnitId" TEXT NOT NULL,
     "addedByUserId" TEXT,
     "removedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -313,13 +295,11 @@ CREATE TABLE "SuppressedEmail" (
 -- CreateTable
 CREATE TABLE "Invitation" (
     "id" TEXT NOT NULL,
-    "type" "InvitationType" NOT NULL,
     "email" TEXT NOT NULL,
     "tokenHash" TEXT NOT NULL,
     "status" "InvitationStatus" NOT NULL DEFAULT 'PENDING',
-    "companyId" TEXT,
-    "invitedCompanyName" TEXT,
-    "role" "UserRole",
+    "unitId" TEXT NOT NULL,
+    "role" "UserRole" NOT NULL,
     "invitedByUserId" TEXT,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "acceptedAt" TIMESTAMP(3),
@@ -331,7 +311,7 @@ CREATE TABLE "Invitation" (
 -- CreateTable
 CREATE TABLE "AuditEvent" (
     "id" TEXT NOT NULL,
-    "companyId" TEXT,
+    "unitId" TEXT,
     "inquiryId" TEXT,
     "actorUserId" TEXT,
     "action" TEXT NOT NULL,
@@ -354,13 +334,16 @@ CREATE TABLE "InquirySequence" (
 );
 
 -- CreateIndex
-CREATE INDEX "Company_status_idx" ON "Company"("status");
+CREATE UNIQUE INDEX "Unit_code_key" ON "Unit"("code");
+
+-- CreateIndex
+CREATE INDEX "Unit_status_idx" ON "Unit"("status");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
 -- CreateIndex
-CREATE INDEX "User_companyId_status_idx" ON "User"("companyId", "status");
+CREATE INDEX "User_unitId_status_idx" ON "User"("unitId", "status");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "RefreshToken_tokenHash_key" ON "RefreshToken"("tokenHash");
@@ -369,22 +352,16 @@ CREATE UNIQUE INDEX "RefreshToken_tokenHash_key" ON "RefreshToken"("tokenHash");
 CREATE INDEX "RefreshToken_userId_idx" ON "RefreshToken"("userId");
 
 -- CreateIndex
-CREATE INDEX "Connection_companyBId_idx" ON "Connection"("companyBId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "Connection_companyAId_companyBId_key" ON "Connection"("companyAId", "companyBId");
-
--- CreateIndex
 CREATE UNIQUE INDEX "Inquiry_number_key" ON "Inquiry"("number");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Inquiry_rootMessageId_key" ON "Inquiry"("rootMessageId");
 
 -- CreateIndex
-CREATE INDEX "Inquiry_requesterCompanyId_status_createdAt_idx" ON "Inquiry"("requesterCompanyId", "status", "createdAt");
+CREATE INDEX "Inquiry_requesterUnitId_status_createdAt_idx" ON "Inquiry"("requesterUnitId", "status", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "Inquiry_providerCompanyId_status_createdAt_idx" ON "Inquiry"("providerCompanyId", "status", "createdAt");
+CREATE INDEX "Inquiry_providerUnitId_status_createdAt_idx" ON "Inquiry"("providerUnitId", "status", "createdAt");
 
 -- CreateIndex
 CREATE INDEX "Inquiry_status_submittedAt_idx" ON "Inquiry"("status", "submittedAt");
@@ -447,28 +424,22 @@ CREATE INDEX "Invitation_email_status_idx" ON "Invitation"("email", "status");
 CREATE INDEX "AuditEvent_inquiryId_createdAt_idx" ON "AuditEvent"("inquiryId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "AuditEvent_companyId_createdAt_idx" ON "AuditEvent"("companyId", "createdAt");
+CREATE INDEX "AuditEvent_unitId_createdAt_idx" ON "AuditEvent"("unitId", "createdAt");
 
 -- CreateIndex
 CREATE INDEX "AuditEvent_entityType_entityId_idx" ON "AuditEvent"("entityType", "entityId");
 
 -- AddForeignKey
-ALTER TABLE "User" ADD CONSTRAINT "User_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "User" ADD CONSTRAINT "User_unitId_fkey" FOREIGN KEY ("unitId") REFERENCES "Unit"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RefreshToken" ADD CONSTRAINT "RefreshToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Connection" ADD CONSTRAINT "Connection_companyAId_fkey" FOREIGN KEY ("companyAId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Inquiry" ADD CONSTRAINT "Inquiry_requesterUnitId_fkey" FOREIGN KEY ("requesterUnitId") REFERENCES "Unit"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Connection" ADD CONSTRAINT "Connection_companyBId_fkey" FOREIGN KEY ("companyBId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Inquiry" ADD CONSTRAINT "Inquiry_requesterCompanyId_fkey" FOREIGN KEY ("requesterCompanyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Inquiry" ADD CONSTRAINT "Inquiry_providerCompanyId_fkey" FOREIGN KEY ("providerCompanyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Inquiry" ADD CONSTRAINT "Inquiry_providerUnitId_fkey" FOREIGN KEY ("providerUnitId") REFERENCES "Unit"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Inquiry" ADD CONSTRAINT "Inquiry_createdByUserId_fkey" FOREIGN KEY ("createdByUserId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -531,13 +502,13 @@ ALTER TABLE "InboundEmail" ADD CONSTRAINT "InboundEmail_recipientId_fkey" FOREIG
 ALTER TABLE "InboundEmail" ADD CONSTRAINT "InboundEmail_commentId_fkey" FOREIGN KEY ("commentId") REFERENCES "Comment"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Invitation" ADD CONSTRAINT "Invitation_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Invitation" ADD CONSTRAINT "Invitation_unitId_fkey" FOREIGN KEY ("unitId") REFERENCES "Unit"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Invitation" ADD CONSTRAINT "Invitation_invitedByUserId_fkey" FOREIGN KEY ("invitedByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_unitId_fkey" FOREIGN KEY ("unitId") REFERENCES "Unit"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "AuditEvent" ADD CONSTRAINT "AuditEvent_inquiryId_fkey" FOREIGN KEY ("inquiryId") REFERENCES "Inquiry"("id") ON DELETE CASCADE ON UPDATE CASCADE;

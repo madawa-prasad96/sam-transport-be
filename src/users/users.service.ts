@@ -6,19 +6,17 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
+import type { AuthUser } from '../common/decorators/current-user.decorator';
+import { seesAllUnits } from '../common/decorators/current-user.decorator';
 import { generateOpaqueToken, hashToken } from '../common/utils/tokens';
 import {
   InvitationStatus,
-  InvitationType,
   UserRole,
   UserStatus,
 } from '../generated/prisma/enums';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
-import type {
-  InviteUserDto,
-  UpdateProfileDto,
-} from './dto/user.dto';
+import type { InviteUserDto, UpdateProfileDto } from './dto/user.dto';
 
 const SAFE_SELECT = {
   id: true,
@@ -28,7 +26,8 @@ const SAFE_SELECT = {
   role: true,
   status: true,
   notificationPreference: true,
-  companyId: true,
+  unitId: true,
+  unit: { select: { id: true, name: true, code: true } },
   lastLoginAt: true,
   createdAt: true,
 } as const;
@@ -42,30 +41,43 @@ export class UsersService {
     private readonly config: ConfigService,
   ) {}
 
-  listForCompany(companyId: string) {
+  /**
+   * A unit admin sees their own unit. An org admin sees everyone, optionally
+   * filtered to one unit.
+   */
+  list(user: AuthUser, unitIdFilter?: string) {
+    const unitId = seesAllUnits(user) ? unitIdFilter : user.unitId;
     return this.prisma.user.findMany({
-      where: { companyId },
+      where: unitId ? { unitId } : {},
       select: SAFE_SELECT,
       orderBy: [{ status: 'asc' }, { fullName: 'asc' }],
     });
   }
 
-  async invite(companyId: string, dto: InviteUserDto, actor: { id: string; fullName: string }) {
-    if (dto.role === UserRole.SUPER_ADMIN) {
-      throw new ForbiddenException('Super admins cannot be invited to a company');
+  async invite(actor: AuthUser, dto: InviteUserDto) {
+    // Only an org admin may mint another org admin, or place a user in a unit
+    // other than their own.
+    if (dto.role === UserRole.ORG_ADMIN && !seesAllUnits(actor)) {
+      throw new ForbiddenException('Only an org admin can grant org admin');
     }
+
+    const unitId = dto.unitId ?? actor.unitId;
+    if (unitId !== actor.unitId && !seesAllUnits(actor)) {
+      throw new ForbiddenException(
+        'You can only invite people into your own unit',
+      );
+    }
+
+    const unit = await this.prisma.unit.findUnique({ where: { id: unitId } });
+    if (!unit) throw new NotFoundException('Unit not found');
 
     const email = dto.email.toLowerCase().trim();
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing && existing.status !== UserStatus.INVITED) {
       throw new BadRequestException(
-        'A user with that email already exists on the platform',
+        'A user with that email already exists',
       );
     }
-
-    const company = await this.prisma.company.findUniqueOrThrow({
-      where: { id: companyId },
-    });
 
     const token = generateOpaqueToken();
 
@@ -78,7 +90,7 @@ export class UsersService {
             phone: dto.phone,
             role: dto.role,
             status: UserStatus.INVITED,
-            companyId,
+            unitId,
           },
         });
       }
@@ -91,10 +103,9 @@ export class UsersService {
 
       await tx.invitation.create({
         data: {
-          type: InvitationType.USER,
           email,
           tokenHash: hashToken(token),
-          companyId,
+          unitId,
           role: dto.role,
           invitedByUserId: actor.id,
           expiresAt: new Date(
@@ -108,7 +119,7 @@ export class UsersService {
     await this.mail.enqueueUserInvitation({
       to: email,
       inviterName: actor.fullName,
-      companyName: company.name,
+      unitName: unit.name,
       token,
     });
 
@@ -117,24 +128,19 @@ export class UsersService {
       entityType: 'User',
       entityId: email,
       actorUserId: actor.id,
-      companyId,
-      after: { email, role: dto.role },
+      unitId,
+      after: { email, role: dto.role, unit: unit.name },
     });
 
     return { ok: true };
   }
 
-  async setStatus(
-    companyId: string,
-    userId: string,
-    status: UserStatus,
-    actorUserId: string,
-  ) {
-    const user = await this.requireCompanyUser(companyId, userId);
+  async setStatus(actor: AuthUser, userId: string, status: UserStatus) {
+    const user = await this.requireManageable(actor, userId);
 
     if (status === UserStatus.DEACTIVATED) {
-      await this.assertNotLastAdmin(companyId, user.id, user.role);
-      if (user.id === actorUserId) {
+      await this.assertNotLastAdmin(user.unitId, user.id, user.role);
+      if (user.id === actor.id) {
         throw new BadRequestException('You cannot deactivate your own account');
       }
     }
@@ -159,8 +165,8 @@ export class UsersService {
       action: `user.${status.toLowerCase()}`,
       entityType: 'User',
       entityId: userId,
-      actorUserId,
-      companyId,
+      actorUserId: actor.id,
+      unitId: user.unitId,
       before: { status: user.status },
       after: { status },
     });
@@ -168,19 +174,15 @@ export class UsersService {
     return updated;
   }
 
-  async setRole(
-    companyId: string,
-    userId: string,
-    role: UserRole,
-    actorUserId: string,
-  ) {
-    if (role === UserRole.SUPER_ADMIN) {
-      throw new ForbiddenException('Cannot grant super admin from a company');
+  async setRole(actor: AuthUser, userId: string, role: UserRole) {
+    if (role === UserRole.ORG_ADMIN && !seesAllUnits(actor)) {
+      throw new ForbiddenException('Only an org admin can grant org admin');
     }
-    const user = await this.requireCompanyUser(companyId, userId);
 
-    if (user.role === UserRole.COMPANY_ADMIN && role !== UserRole.COMPANY_ADMIN) {
-      await this.assertNotLastAdmin(companyId, userId, user.role);
+    const user = await this.requireManageable(actor, userId);
+
+    if (user.role === UserRole.UNIT_ADMIN && role !== UserRole.UNIT_ADMIN) {
+      await this.assertNotLastAdmin(user.unitId, userId, user.role);
     }
 
     const updated = await this.prisma.user.update({
@@ -193,10 +195,40 @@ export class UsersService {
       action: 'user.role_changed',
       entityType: 'User',
       entityId: userId,
-      actorUserId,
-      companyId,
+      actorUserId: actor.id,
+      unitId: user.unitId,
       before: { role: user.role },
       after: { role },
+    });
+
+    return updated;
+  }
+
+  /** Org admin only: move someone to a different unit. */
+  async moveToUnit(actor: AuthUser, userId: string, unitId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const unit = await this.prisma.unit.findUnique({ where: { id: unitId } });
+    if (!unit) throw new NotFoundException('Unit not found');
+
+    if (user.unitId === unitId) return user;
+    await this.assertNotLastAdmin(user.unitId, userId, user.role);
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { unitId },
+      select: SAFE_SELECT,
+    });
+
+    await this.audit.record({
+      action: 'user.moved_unit',
+      entityType: 'User',
+      entityId: userId,
+      actorUserId: actor.id,
+      unitId,
+      before: { unitId: user.unitId },
+      after: { unitId },
     });
 
     return updated;
@@ -210,34 +242,40 @@ export class UsersService {
     });
   }
 
-  private async requireCompanyUser(companyId: string, userId: string) {
+  /**
+   * A unit admin may only touch users in their own unit; an org admin may touch
+   * anyone. Scoping the lookup rather than checking afterwards is what keeps a
+   * forgotten guard from becoming a hole.
+   */
+  private async requireManageable(actor: AuthUser, userId: string) {
     const user = await this.prisma.user.findFirst({
-      where: { id: userId, companyId },
+      where: {
+        id: userId,
+        ...(seesAllUnits(actor) ? {} : { unitId: actor.unitId }),
+      },
     });
-    // Scoping the lookup by company is what stops one company touching another's
-    // users — a plain findUnique here would be a cross-tenant hole.
-    if (!user) throw new NotFoundException('User not found in this company');
+    if (!user) throw new NotFoundException('User not found in your unit');
     return user;
   }
 
-  /** Rule U3 — a company must always retain at least one active admin. */
+  /** Every unit keeps at least one active administrator. */
   private async assertNotLastAdmin(
-    companyId: string,
+    unitId: string,
     userId: string,
     role: UserRole,
   ) {
-    if (role !== UserRole.COMPANY_ADMIN) return;
+    if (role !== UserRole.UNIT_ADMIN && role !== UserRole.ORG_ADMIN) return;
     const remaining = await this.prisma.user.count({
       where: {
-        companyId,
-        role: UserRole.COMPANY_ADMIN,
+        unitId,
+        role: { in: [UserRole.UNIT_ADMIN, UserRole.ORG_ADMIN] },
         status: UserStatus.ACTIVE,
         id: { not: userId },
       },
     });
     if (remaining === 0) {
       throw new BadRequestException(
-        'This company must keep at least one active administrator',
+        'This unit must keep at least one active administrator',
       );
     }
   }

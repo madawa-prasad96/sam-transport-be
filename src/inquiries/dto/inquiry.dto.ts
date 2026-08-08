@@ -42,7 +42,7 @@ export class InquiryRecipientDto {
 
 export class CreateInquiryDto {
   @IsUUID()
-  providerCompanyId!: string;
+  providerUnitId!: string;
 
   /**
    * Copied recipients. They are attached while the inquiry is still a draft, so

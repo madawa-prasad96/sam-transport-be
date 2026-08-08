@@ -6,7 +6,7 @@ export interface AuditInput {
   entityType: string;
   entityId: string;
   actorUserId?: string | null;
-  companyId?: string | null;
+  unitId?: string | null;
   inquiryId?: string | null;
   before?: unknown;
   after?: unknown;
@@ -36,7 +36,7 @@ export class AuditService {
           entityType: input.entityType,
           entityId: input.entityId,
           actorUserId: input.actorUserId ?? null,
-          companyId: input.companyId ?? null,
+          unitId: input.unitId ?? null,
           inquiryId: input.inquiryId ?? null,
           before: (input.before ?? null) as never,
           after: (input.after ?? null) as never,

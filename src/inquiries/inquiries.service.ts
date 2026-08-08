@@ -6,7 +6,8 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
-import { ConnectionsService } from '../connections/connections.service';
+import { seesAllUnits } from '../common/decorators/current-user.decorator';
+import { UnitsService } from '../units/units.service';
 import {
   CommentSource,
   EmailEventType,
@@ -52,7 +53,7 @@ export class InquiriesService {
     private readonly mail: MailService,
     private readonly tokens: MailTokenService,
     private readonly audit: AuditService,
-    private readonly connections: ConnectionsService,
+    private readonly units: UnitsService,
     private readonly recipients: RecipientsService,
   ) {}
 
@@ -61,28 +62,54 @@ export class InquiriesService {
   // -------------------------------------------------------------------------
 
   /**
-   * A company sees inquiries it raised, plus inquiries addressed to it that
-   * have actually been submitted. Drafts stay private to the requester (Rule L2).
+   * A unit sees inquiries it raised, plus inquiries addressed to it that have
+   * actually been submitted. An org admin sees every submitted inquiry across
+   * SAM — but drafts stay private to the unit that is still writing them
+   * (Rule L2), because an unsent draft is working material, not a record.
    */
-  private scope(companyId: string) {
+  private scope(user: AuthUser) {
+    if (seesAllUnits(user)) {
+      return {
+        OR: [
+          { status: { not: InquiryStatus.DRAFT } },
+          { requesterUnitId: user.unitId },
+        ],
+      };
+    }
     return {
       OR: [
-        { requesterCompanyId: companyId },
+        { requesterUnitId: user.unitId },
         {
-          providerCompanyId: companyId,
+          providerUnitId: user.unitId,
           status: { not: InquiryStatus.DRAFT },
         },
       ],
     };
   }
 
-  private async requireAccess(companyId: string, inquiryId: string) {
+  private async requireAccess(user: AuthUser, inquiryId: string) {
     const inquiry = await this.prisma.inquiry.findFirst({
-      where: { id: inquiryId, ...this.scope(companyId) },
-      include: { requesterCompany: true, providerCompany: true },
+      where: { id: inquiryId, ...this.scope(user) },
+      include: { requesterUnit: true, providerUnit: true },
     });
     if (!inquiry) throw new NotFoundException('Inquiry not found');
     return inquiry;
+  }
+
+  /**
+   * Read access is broad for an org admin; acting is not. Submitting, declining
+   * or cancelling belongs to the units actually party to the inquiry, so the
+   * audit trail always names a real participant.
+   */
+  private assertIsParty(inquiry: { requesterUnitId: string; providerUnitId: string }, user: AuthUser) {
+    if (
+      inquiry.requesterUnitId !== user.unitId &&
+      inquiry.providerUnitId !== user.unitId
+    ) {
+      throw new ForbiddenException(
+        'Only the units involved in this inquiry can act on it',
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -90,24 +117,23 @@ export class InquiriesService {
   // -------------------------------------------------------------------------
 
   async list(user: AuthUser, query: ListInquiriesDto) {
-    const companyId = this.companyOf(user);
-    const page = query.page ?? 1;
+        const page = query.page ?? 1;
     const pageSize = Math.min(query.pageSize ?? 25, 100);
 
-    const filters: Record<string, unknown>[] = [this.scope(companyId)];
+    const filters: Record<string, unknown>[] = [this.scope(user)];
 
     if (query.direction === 'incoming') {
-      filters.push({ providerCompanyId: companyId });
+      filters.push({ providerUnitId: user.unitId });
     } else if (query.direction === 'outgoing') {
-      filters.push({ requesterCompanyId: companyId });
+      filters.push({ requesterUnitId: user.unitId });
     }
     if (query.status) filters.push({ status: query.status });
     if (query.priority) filters.push({ priority: query.priority });
     if (query.counterpartyId) {
       filters.push({
         OR: [
-          { requesterCompanyId: query.counterpartyId },
-          { providerCompanyId: query.counterpartyId },
+          { requesterUnitId: query.counterpartyId },
+          { providerUnitId: query.counterpartyId },
         ],
       });
     }
@@ -140,8 +166,8 @@ export class InquiriesService {
       this.prisma.inquiry.findMany({
         where,
         include: {
-          requesterCompany: { select: { id: true, name: true } },
-          providerCompany: { select: { id: true, name: true } },
+          requesterUnit: { select: { id: true, name: true } },
+          providerUnit: { select: { id: true, name: true } },
           createdBy: { select: { id: true, fullName: true } },
           vehicleDetails: { orderBy: { version: 'desc' }, take: 1 },
         },
@@ -162,14 +188,13 @@ export class InquiriesService {
   }
 
   async findOne(user: AuthUser, inquiryId: string) {
-    const companyId = this.companyOf(user);
-    await this.requireAccess(companyId, inquiryId);
+    await this.requireAccess(user, inquiryId);
 
     const inquiry = await this.prisma.inquiry.findUniqueOrThrow({
       where: { id: inquiryId },
       include: {
-        requesterCompany: true,
-        providerCompany: true,
+        requesterUnit: true,
+        providerUnit: true,
         createdBy: { select: { id: true, fullName: true, email: true } },
         vehicleDetails: {
           orderBy: { version: 'desc' },
@@ -188,27 +213,29 @@ export class InquiriesService {
 
   /**
    * Rule R3 — BCC entries are visible only to the person who added them and to
-   * admins of the company that added them. CC is visible to everyone.
+   * admins of the unit that added them. CC is visible to everyone.
    */
   private visibleRecipients<
     T extends {
       type: RecipientType;
       addedByUserId: string | null;
-      addedByCompanyId: string;
+      addedByUnitId: string;
     },
   >(recipients: T[], user: AuthUser): T[] {
     return recipients.filter((recipient) => {
       if (recipient.type !== RecipientType.BCC) return true;
       if (recipient.addedByUserId === user.id) return true;
+      // An org admin is SAM's audit authority, so BCC is never hidden from them.
+      if (seesAllUnits(user)) return true;
       return (
-        user.role === UserRole.COMPANY_ADMIN &&
-        recipient.addedByCompanyId === user.companyId
+        user.role === UserRole.UNIT_ADMIN &&
+        recipient.addedByUnitId === user.unitId
       );
     });
   }
 
   async timeline(user: AuthUser, inquiryId: string) {
-    await this.requireAccess(this.companyOf(user), inquiryId);
+    await this.requireAccess(user, inquiryId);
     return this.prisma.timelineEvent.findMany({
       where: { inquiryId },
       include: { actor: { select: { id: true, fullName: true } } },
@@ -217,11 +244,11 @@ export class InquiriesService {
   }
 
   async comments(user: AuthUser, inquiryId: string) {
-    await this.requireAccess(this.companyOf(user), inquiryId);
+    await this.requireAccess(user, inquiryId);
     return this.prisma.comment.findMany({
       where: { inquiryId },
       include: {
-        author: { select: { id: true, fullName: true, companyId: true } },
+        author: { select: { id: true, fullName: true, unitId: true } },
         attachments: true,
       },
       orderBy: { createdAt: 'asc' },
@@ -230,7 +257,7 @@ export class InquiriesService {
 
   /** The delivery trace that makes the app trustworthy as a mailbox replacement. */
   async emailLog(user: AuthUser, inquiryId: string) {
-    await this.requireAccess(this.companyOf(user), inquiryId);
+    await this.requireAccess(user, inquiryId);
 
     const messages = await this.prisma.emailMessage.findMany({
       where: { inquiryId },
@@ -258,7 +285,7 @@ export class InquiriesService {
   ) {
     return recipients.map((recipient) =>
       recipient.type === RecipientType.BCC &&
-      user.role !== UserRole.COMPANY_ADMIN
+      user.role === UserRole.UNIT_USER
         ? { ...recipient, email: 'hidden' }
         : recipient,
     );
@@ -269,10 +296,9 @@ export class InquiriesService {
   // -------------------------------------------------------------------------
 
   async create(user: AuthUser, dto: CreateInquiryDto) {
-    const companyId = this.companyOf(user);
-    await this.connections.assertActiveConnection(
-      companyId,
-      dto.providerCompanyId,
+    await this.units.assertAddressable(
+      user.unitId,
+      dto.providerUnitId,
     );
     this.assertTimingSane(dto.readyByAt, dto.requiredByAt);
 
@@ -287,8 +313,8 @@ export class InquiriesService {
         data: {
           number,
           status: InquiryStatus.DRAFT,
-          requesterCompanyId: companyId,
-          providerCompanyId: dto.providerCompanyId,
+          requesterUnitId: user.unitId,
+          providerUnitId: dto.providerUnitId,
           createdByUserId: user.id,
           pickupLocation: dto.pickupLocation,
           pickupContactName: dto.pickupContactName,
@@ -344,7 +370,7 @@ export class InquiriesService {
       entityType: 'Inquiry',
       entityId: inquiry.id,
       actorUserId: user.id,
-      companyId,
+      unitId: user.unitId,
       inquiryId: inquiry.id,
       after: { number: inquiry.number, status: inquiry.status },
     });
@@ -353,12 +379,11 @@ export class InquiriesService {
   }
 
   async update(user: AuthUser, inquiryId: string, dto: UpdateInquiryDto) {
-    const companyId = this.companyOf(user);
-    const inquiry = await this.requireAccess(companyId, inquiryId);
+    const inquiry = await this.requireAccess(user, inquiryId);
 
-    if (inquiry.requesterCompanyId !== companyId) {
+    if (inquiry.requesterUnitId !== user.unitId) {
       throw new ForbiddenException(
-        'Only the requesting company can edit an inquiry',
+        'Only the requesting unit can edit an inquiry',
       );
     }
     if (
@@ -412,7 +437,7 @@ export class InquiriesService {
       entityType: 'Inquiry',
       entityId: inquiryId,
       actorUserId: user.id,
-      companyId,
+      unitId: user.unitId,
       inquiryId,
       before: changes,
     });
@@ -423,7 +448,7 @@ export class InquiriesService {
         inquiryId,
         eventType: EmailEventType.INQUIRY_AMENDED,
         actorName: user.fullName,
-        actorCompanyName: inquiry.requesterCompany.name,
+        actorUnitName: inquiry.requesterUnit.name,
         details: Object.entries(changes).map(([field, value]) => ({
           label: this.humanise(field),
           value: `${(value as { from: unknown }).from} → ${(value as { to: unknown }).to}`,
@@ -435,11 +460,10 @@ export class InquiriesService {
   }
 
   async submit(user: AuthUser, inquiryId: string) {
-    const companyId = this.companyOf(user);
-    const inquiry = await this.requireAccess(companyId, inquiryId);
+    const inquiry = await this.requireAccess(user, inquiryId);
 
-    if (inquiry.requesterCompanyId !== companyId) {
-      throw new ForbiddenException('Only the requesting company can submit');
+    if (inquiry.requesterUnitId !== user.unitId) {
+      throw new ForbiddenException('Only the requesting unit can submit this inquiry');
     }
     if (
       inquiry.status !== InquiryStatus.DRAFT &&
@@ -451,9 +475,9 @@ export class InquiriesService {
     }
     // A declined inquiry can be re-submitted, but not to a company we've since
     // been disconnected from.
-    await this.connections.assertActiveConnection(
-      companyId,
-      inquiry.providerCompanyId,
+    await this.units.assertAddressable(
+      user.unitId,
+      inquiry.providerUnitId,
     );
 
     const isResubmission = inquiry.status === InquiryStatus.DECLINED;
@@ -469,7 +493,7 @@ export class InquiriesService {
       },
     });
 
-    await this.seedRecipients(inquiry.id, inquiry.requesterCompanyId, user.id);
+    await this.seedRecipients(inquiry.id, inquiry.requesterUnitId, user.id);
 
     const eventType = isResubmission
       ? EmailEventType.INQUIRY_RESUBMITTED
@@ -487,7 +511,7 @@ export class InquiriesService {
       inquiryId,
       eventType,
       actorName: user.fullName,
-      actorCompanyName: inquiry.requesterCompany.name,
+      actorUnitName: inquiry.requesterUnit.name,
       details: this.inquiryDetailRows(updated),
     });
     await this.audit.record({
@@ -495,7 +519,7 @@ export class InquiriesService {
       entityType: 'Inquiry',
       entityId: inquiryId,
       actorUserId: user.id,
-      companyId,
+      unitId: user.unitId,
       inquiryId,
       after: { status: updated.status },
     });
@@ -508,12 +532,11 @@ export class InquiriesService {
     inquiryId: string,
     dto: ProvideVehicleDto,
   ) {
-    const companyId = this.companyOf(user);
-    const inquiry = await this.requireAccess(companyId, inquiryId);
+    const inquiry = await this.requireAccess(user, inquiryId);
 
-    if (inquiry.providerCompanyId !== companyId) {
+    if (inquiry.providerUnitId !== user.unitId) {
       throw new ForbiddenException(
-        'Only the company the inquiry was addressed to can provide a vehicle',
+        'Only the unit the inquiry was addressed to can provide a vehicle',
       );
     }
     if (
@@ -572,7 +595,7 @@ export class InquiriesService {
         ? EmailEventType.VEHICLE_UPDATED
         : EmailEventType.VEHICLE_PROVIDED,
       actorName: user.fullName,
-      actorCompanyName: inquiry.providerCompany.name,
+      actorUnitName: inquiry.providerUnit.name,
       details: [
         { label: 'Vehicle number', value: detail.vehicleNumber },
         { label: 'Vehicle type', value: this.humanise(detail.vehicleType) },
@@ -595,7 +618,7 @@ export class InquiriesService {
       entityType: 'VehicleDetail',
       entityId: detail.id,
       actorUserId: user.id,
-      companyId,
+      unitId: user.unitId,
       inquiryId,
       after: { version: detail.version, vehicleNumber: detail.vehicleNumber },
     });
@@ -604,12 +627,11 @@ export class InquiriesService {
   }
 
   async decline(user: AuthUser, inquiryId: string, dto: DeclineInquiryDto) {
-    const companyId = this.companyOf(user);
-    const inquiry = await this.requireAccess(companyId, inquiryId);
+    const inquiry = await this.requireAccess(user, inquiryId);
 
-    if (inquiry.providerCompanyId !== companyId) {
+    if (inquiry.providerUnitId !== user.unitId) {
       throw new ForbiddenException(
-        'Only the company the inquiry was addressed to can decline it',
+        'Only the unit the inquiry was addressed to can decline it',
       );
     }
     if (inquiry.status !== InquiryStatus.SUBMITTED) {
@@ -637,7 +659,7 @@ export class InquiriesService {
       inquiryId,
       eventType: EmailEventType.INQUIRY_DECLINED,
       actorName: user.fullName,
-      actorCompanyName: inquiry.providerCompany.name,
+      actorUnitName: inquiry.providerUnit.name,
       message: dto.reason,
       details: [{ label: 'Inquiry', value: inquiry.number }],
     });
@@ -646,7 +668,7 @@ export class InquiriesService {
       entityType: 'Inquiry',
       entityId: inquiryId,
       actorUserId: user.id,
-      companyId,
+      unitId: user.unitId,
       inquiryId,
       after: { status: updated.status, reason: dto.reason },
     });
@@ -655,12 +677,11 @@ export class InquiriesService {
   }
 
   async cancel(user: AuthUser, inquiryId: string, reason?: string) {
-    const companyId = this.companyOf(user);
-    const inquiry = await this.requireAccess(companyId, inquiryId);
+    const inquiry = await this.requireAccess(user, inquiryId);
 
-    if (inquiry.requesterCompanyId !== companyId) {
+    if (inquiry.requesterUnitId !== user.unitId) {
       throw new ForbiddenException(
-        'Only the requesting company can cancel an inquiry',
+        'Only the requesting unit can cancel an inquiry',
       );
     }
     if (
@@ -689,7 +710,7 @@ export class InquiriesService {
         inquiryId,
         eventType: EmailEventType.INQUIRY_CANCELLED,
         actorName: user.fullName,
-        actorCompanyName: inquiry.requesterCompany.name,
+        actorUnitName: inquiry.requesterUnit.name,
         message: reason,
         details: wasAssigned
           ? [
@@ -708,7 +729,7 @@ export class InquiriesService {
       entityType: 'Inquiry',
       entityId: inquiryId,
       actorUserId: user.id,
-      companyId,
+      unitId: user.unitId,
       inquiryId,
       after: { status: updated.status, reason },
     });
@@ -718,8 +739,7 @@ export class InquiriesService {
 
   /** Rule L1 — either party may close it out. */
   async complete(user: AuthUser, inquiryId: string) {
-    const companyId = this.companyOf(user);
-    const inquiry = await this.requireAccess(companyId, inquiryId);
+    const inquiry = await this.requireAccess(user, inquiryId);
 
     // Idempotent: whoever gets there first wins, the second call is a no-op.
     if (inquiry.status === InquiryStatus.COMPLETED) return inquiry;
@@ -756,7 +776,7 @@ export class InquiriesService {
       entityType: 'Inquiry',
       entityId: inquiryId,
       actorUserId: user.id,
-      companyId,
+      unitId: user.unitId,
       inquiryId,
       after: { status: updated.status },
     });
@@ -765,8 +785,7 @@ export class InquiriesService {
   }
 
   async addComment(user: AuthUser, inquiryId: string, dto: CreateCommentDto) {
-    const companyId = this.companyOf(user);
-    const inquiry = await this.requireAccess(companyId, inquiryId);
+    const inquiry = await this.requireAccess(user, inquiryId);
 
     const comment = await this.prisma.comment.create({
       data: {
@@ -785,16 +804,16 @@ export class InquiriesService {
     });
 
     if (inquiry.status !== InquiryStatus.DRAFT) {
-      const actorCompanyName =
-        inquiry.requesterCompanyId === companyId
-          ? inquiry.requesterCompany.name
-          : inquiry.providerCompany.name;
+      const actorUnitName =
+        inquiry.requesterUnitId === user.unitId
+          ? inquiry.requesterUnit.name
+          : inquiry.providerUnit.name;
 
       await this.mail.enqueueInquiryEmail({
         inquiryId,
         eventType: EmailEventType.COMMENT_ADDED,
         actorName: user.fullName,
-        actorCompanyName,
+        actorUnitName,
         message: dto.body,
         details: [],
       });
@@ -813,12 +832,12 @@ export class InquiriesService {
    */
   private async seedRecipients(
     inquiryId: string,
-    requesterCompanyId: string,
+    requesterUnitId: string,
     creatorUserId: string,
   ) {
     const inquiry = await this.prisma.inquiry.findUniqueOrThrow({
       where: { id: inquiryId },
-      include: { providerCompany: true, createdBy: true },
+      include: { providerUnit: true, createdBy: true },
     });
 
     const seeds = [
@@ -826,13 +845,13 @@ export class InquiriesService {
         email: inquiry.createdBy.email,
         name: inquiry.createdBy.fullName,
         userId: inquiry.createdBy.id,
-        addedByCompanyId: requesterCompanyId,
+        addedByUnitId: requesterUnitId,
       },
       {
-        email: inquiry.providerCompany.primaryContactEmail,
-        name: inquiry.providerCompany.primaryContactName,
+        email: inquiry.providerUnit.primaryContactEmail,
+        name: inquiry.providerUnit.primaryContactName,
         userId: null,
-        addedByCompanyId: inquiry.providerCompanyId,
+        addedByUnitId: inquiry.providerUnitId,
       },
     ];
 
@@ -848,7 +867,7 @@ export class InquiriesService {
           email: seed.email.toLowerCase(),
           name: seed.name,
           userId: seed.userId,
-          addedByCompanyId: seed.addedByCompanyId,
+          addedByUnitId: seed.addedByUnitId,
           addedByUserId: creatorUserId,
         },
         update: { removedAt: null },
@@ -1002,14 +1021,5 @@ export class InquiriesService {
         payload: payload as never,
       },
     });
-  }
-
-  private companyOf(user: AuthUser): string {
-    if (!user.companyId) {
-      throw new ForbiddenException(
-        'Platform administrators cannot access inquiry content',
-      );
-    }
-    return user.companyId;
   }
 }

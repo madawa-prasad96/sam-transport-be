@@ -13,10 +13,8 @@ import {
   hashToken,
 } from '../common/utils/tokens';
 import {
-  CompanyStatus,
   InvitationStatus,
-  InvitationType,
-  UserRole,
+  UnitStatus,
   UserStatus,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
@@ -38,7 +36,7 @@ export class AuthService {
   async login(dto: LoginDto): Promise<{ user: AuthUser; tokens: TokenPair }> {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase().trim() },
-      include: { company: true },
+      include: { unit: true },
     });
 
     // Same error for unknown email and wrong password — don't leak which
@@ -57,8 +55,8 @@ export class AuthService {
     if (user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException('This account has been deactivated');
     }
-    if (user.company && user.company.status !== CompanyStatus.ACTIVE) {
-      throw new UnauthorizedException('This company account is not active');
+    if (user.unit.status !== UnitStatus.ACTIVE) {
+      throw new UnauthorizedException('Your unit is not currently active');
     }
 
     await this.prisma.user.update({
@@ -71,7 +69,7 @@ export class AuthService {
       email: user.email,
       fullName: user.fullName,
       role: user.role,
-      companyId: user.companyId,
+      unitId: user.unitId,
     };
 
     return { user: authUser, tokens: await this.issueTokens(user.id) };
@@ -115,7 +113,7 @@ export class AuthService {
   ): Promise<{ user: AuthUser; tokens: TokenPair }> {
     const invitation = await this.prisma.invitation.findUnique({
       where: { tokenHash: hashToken(dto.token) },
-      include: { company: true },
+      include: { unit: true },
     });
 
     if (!invitation || invitation.status !== InvitationStatus.PENDING) {
@@ -128,46 +126,22 @@ export class AuthService {
       });
       throw new BadRequestException('This invitation has expired');
     }
+    if (invitation.unit.status !== UnitStatus.ACTIVE) {
+      throw new BadRequestException(
+        `${invitation.unit.name} is not currently active`,
+      );
+    }
 
     const passwordHash = await argon2.hash(dto.password, {
       type: argon2.argon2id,
     });
 
     const user = await this.prisma.$transaction(async (tx) => {
-      // A COMPANY invitation also activates the company and completes its profile.
-      if (invitation.type === InvitationType.COMPANY && invitation.companyId) {
-        await tx.company.update({
-          where: { id: invitation.companyId },
-          data: {
-            status: CompanyStatus.ACTIVE,
-            ...(dto.companyName ? { name: dto.companyName } : {}),
-            ...(dto.addressLine ? { addressLine: dto.addressLine } : {}),
-            ...(dto.country ? { country: dto.country } : {}),
-            ...(dto.primaryContactPhone
-              ? { primaryContactPhone: dto.primaryContactPhone }
-              : {}),
-            ...(dto.fullName ? { primaryContactName: dto.fullName } : {}),
-          },
-        });
-
-        // Activate every connection that was waiting on this company joining.
-        await tx.connection.updateMany({
-          where: {
-            status: 'INVITED',
-            OR: [
-              { companyAId: invitation.companyId },
-              { companyBId: invitation.companyId },
-            ],
-          },
-          data: { status: 'ACTIVE' },
-        });
-      }
-
       const existing = await tx.user.findUnique({
         where: { email: invitation.email },
       });
 
-      const created = existing
+      const activated = existing
         ? await tx.user.update({
             where: { id: existing.id },
             data: {
@@ -183,9 +157,9 @@ export class AuthService {
               fullName: dto.fullName ?? invitation.email,
               phone: dto.phone,
               passwordHash,
-              role: invitation.role ?? UserRole.COMPANY_USER,
+              role: invitation.role,
               status: UserStatus.ACTIVE,
-              companyId: invitation.companyId,
+              unitId: invitation.unitId,
             },
           });
 
@@ -194,7 +168,7 @@ export class AuthService {
         data: { status: InvitationStatus.ACCEPTED, acceptedAt: new Date() },
       });
 
-      return created;
+      return activated;
     });
 
     const authUser: AuthUser = {
@@ -202,7 +176,7 @@ export class AuthService {
       email: user.email,
       fullName: user.fullName,
       role: user.role,
-      companyId: user.companyId,
+      unitId: user.unitId,
     };
 
     return { user: authUser, tokens: await this.issueTokens(user.id) };

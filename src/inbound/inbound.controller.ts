@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   Headers,
   Param,
@@ -54,19 +53,12 @@ export class InboundController {
 
   @Get('inbound/quarantine')
   listQuarantine(@CurrentUser() user: AuthUser) {
-    return this.inbound.listQuarantined(this.companyOf(user));
+    return this.inbound.listQuarantined(user.unitId);
   }
 
-  @Roles(UserRole.COMPANY_ADMIN)
+  @Roles(UserRole.ORG_ADMIN, UserRole.UNIT_ADMIN)
   @Delete('inbound/quarantine/:id')
   discard(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.inbound.discardQuarantined(this.companyOf(user), id);
-  }
-
-  private companyOf(user: AuthUser): string {
-    if (!user.companyId) {
-      throw new ForbiddenException('This account has no company');
-    }
-    return user.companyId;
+    return this.inbound.discardQuarantined(user.unitId, id);
   }
 }

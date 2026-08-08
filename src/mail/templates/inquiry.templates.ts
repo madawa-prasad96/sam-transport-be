@@ -12,9 +12,9 @@ export interface InquiryEmailContext {
   inquiryNumber: string;
   subjectLine: string;
   actorName: string;
-  actorCompanyName: string;
-  requesterCompanyName: string;
-  providerCompanyName: string;
+  actorUnitName: string;
+  requesterUnitName: string;
+  providerUnitName: string;
   inquiryUrl: string;
   /** Event-specific rows rendered as the detail table. */
   details: DetailRow[];
@@ -29,7 +29,7 @@ const copy: Record<
   INQUIRY_SUBMITTED: {
     heading: (c) => `New transport inquiry ${c.inquiryNumber}`,
     intro: (c) =>
-      `${c.actorName} at ${c.requesterCompanyName} has requested a vehicle from ${c.providerCompanyName}.`,
+      `${c.actorName} at ${c.requesterUnitName} has requested a vehicle from ${c.providerUnitName}.`,
   },
   INQUIRY_AMENDED: {
     heading: (c) => `Inquiry ${c.inquiryNumber} was amended`,
@@ -38,17 +38,17 @@ const copy: Record<
   VEHICLE_PROVIDED: {
     heading: (c) => `Vehicle assigned for ${c.inquiryNumber}`,
     intro: (c) =>
-      `${c.actorName} at ${c.providerCompanyName} has assigned a vehicle to this inquiry.`,
+      `${c.actorName} at ${c.providerUnitName} has assigned a vehicle to this inquiry.`,
   },
   VEHICLE_UPDATED: {
     heading: (c) => `Vehicle details changed for ${c.inquiryNumber}`,
     intro: (c) =>
-      `${c.actorName} at ${c.providerCompanyName} has revised the vehicle details. The previous details are no longer valid.`,
+      `${c.actorName} at ${c.providerUnitName} has revised the vehicle details. The previous details are no longer valid.`,
   },
   INQUIRY_DECLINED: {
     heading: (c) => `Inquiry ${c.inquiryNumber} was declined`,
     intro: (c) =>
-      `${c.actorName} at ${c.providerCompanyName} is unable to provide a vehicle for this request.`,
+      `${c.actorName} at ${c.providerUnitName} is unable to provide a vehicle for this request.`,
   },
   INQUIRY_RESUBMITTED: {
     heading: (c) => `Inquiry ${c.inquiryNumber} was re-submitted`,
@@ -58,7 +58,7 @@ const copy: Record<
   INQUIRY_CANCELLED: {
     heading: (c) => `Inquiry ${c.inquiryNumber} was cancelled`,
     intro: (c) =>
-      `${c.actorName} at ${c.requesterCompanyName} has cancelled this request. If a vehicle was already dispatched, please stand it down.`,
+      `${c.actorName} at ${c.requesterUnitName} has cancelled this request. If a vehicle was already dispatched, please stand it down.`,
   },
   INQUIRY_COMPLETED: {
     heading: (c) => `Inquiry ${c.inquiryNumber} is complete`,
@@ -66,7 +66,7 @@ const copy: Record<
   },
   COMMENT_ADDED: {
     heading: (c) => `New comment on ${c.inquiryNumber}`,
-    intro: (c) => `${c.actorName} at ${c.actorCompanyName} commented:`,
+    intro: (c) => `${c.actorName} at ${c.actorUnitName} commented:`,
   },
   INBOUND_REPLY: {
     heading: (c) => `New reply on ${c.inquiryNumber}`,
@@ -80,7 +80,7 @@ const copy: Record<
   NO_RESPONSE_REMINDER: {
     heading: (c) => `Reminder: ${c.inquiryNumber} is awaiting a response`,
     intro: (c) =>
-      `This inquiry has not yet received vehicle details from ${c.providerCompanyName}.`,
+      `This inquiry has not yet received vehicle details from ${c.providerUnitName}.`,
   },
 };
 
@@ -127,16 +127,16 @@ export const renderInquiryEmail = (
 
 export const renderUserInvitation = (ctx: {
   inviterName: string;
-  companyName: string;
+  unitName: string;
   acceptUrl: string;
   expiresInHours: number;
 }): RenderedEmail => {
-  const heading = `You've been invited to ${ctx.companyName}`;
-  const intro = `${ctx.inviterName} has invited you to join ${ctx.companyName} on the Transport Inquiry Platform.`;
+  const heading = `You've been added to ${ctx.unitName}`;
+  const intro = `${ctx.inviterName} has added you to ${ctx.unitName} on SAM Transport. Set a password to get started.`;
   const footer = `This invitation expires in ${ctx.expiresInHours} hours. If you weren't expecting it, you can ignore this email.`;
 
   return {
-    subject: `Join ${ctx.companyName} on the Transport Inquiry Platform`,
+    subject: `Set up your SAM Transport account for ${ctx.unitName}`,
     html: layout({
       heading,
       intro,
@@ -156,36 +156,3 @@ export const renderUserInvitation = (ctx: {
   };
 };
 
-export const renderCompanyInvitation = (ctx: {
-  inviterName: string;
-  inviterCompanyName: string;
-  invitedCompanyName: string;
-  acceptUrl: string;
-  expiresInHours: number;
-}): RenderedEmail => {
-  const heading = `${ctx.inviterCompanyName} wants to connect with you`;
-  const intro =
-    `${ctx.inviterName} at ${ctx.inviterCompanyName} has invited ${ctx.invitedCompanyName} onto the Transport Inquiry Platform, ` +
-    `so transport requests between your companies are handled in one place instead of over email.`;
-  const footer = `This invitation expires in ${ctx.expiresInHours} hours.`;
-
-  return {
-    subject: `${ctx.inviterCompanyName} invited you to the Transport Inquiry Platform`,
-    html: layout({
-      heading,
-      intro,
-      bodyHtml: '',
-      actionLabel: 'Set up your company',
-      actionUrl: ctx.acceptUrl,
-      footerNote: footer,
-    }),
-    text: textLayout({
-      heading,
-      intro,
-      bodyText: '',
-      actionLabel: 'Set up your company',
-      actionUrl: ctx.acceptUrl,
-      footerNote: footer,
-    }),
-  };
-};

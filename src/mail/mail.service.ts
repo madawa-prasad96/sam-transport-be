@@ -9,7 +9,6 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { MailTokenService } from './mail-token.service';
 import {
-  renderCompanyInvitation,
   renderInquiryEmail,
   renderUserInvitation,
   type InquiryEmailContext,
@@ -28,7 +27,6 @@ const ALWAYS_INSTANT: EmailEventType[] = [
   EmailEventType.VEHICLE_UPDATED,
   EmailEventType.INQUIRY_RESUBMITTED,
   EmailEventType.USER_INVITED,
-  EmailEventType.COMPANY_INVITED,
   EmailEventType.RECIPIENT_ADDED,
 ];
 
@@ -36,7 +34,7 @@ export interface EnqueueInquiryEmailInput {
   inquiryId: string;
   eventType: EmailEventType;
   actorName: string;
-  actorCompanyName?: string;
+  actorUnitName?: string;
   details?: DetailRow[];
   message?: string;
   /** When set, only these addresses receive the mail (used for BCC-only notices). */
@@ -61,8 +59,8 @@ export class MailService {
     const inquiry = await this.prisma.inquiry.findUnique({
       where: { id: input.inquiryId },
       include: {
-        requesterCompany: true,
-        providerCompany: true,
+        requesterUnit: true,
+        providerUnit: true,
         recipients: {
           where: { removedAt: null },
           include: { user: true },
@@ -118,9 +116,9 @@ export class MailService {
       inquiryNumber: inquiry.number,
       subjectLine: inquiry.subjectLine,
       actorName: input.actorName,
-      actorCompanyName: input.actorCompanyName ?? '',
-      requesterCompanyName: inquiry.requesterCompany.name,
-      providerCompanyName: inquiry.providerCompany.name,
+      actorUnitName: input.actorUnitName ?? '',
+      requesterUnitName: inquiry.requesterUnit.name,
+      providerUnitName: inquiry.providerUnit.name,
       inquiryUrl: `${this.config.get<string>('webAppUrl')}/inquiries/${inquiry.id}`,
       details: input.details ?? [],
       message: input.message,
@@ -208,38 +206,17 @@ export class MailService {
   async enqueueUserInvitation(input: {
     to: string;
     inviterName: string;
-    companyName: string;
+    unitName: string;
     token: string;
   }): Promise<void> {
     const rendered = renderUserInvitation({
       inviterName: input.inviterName,
-      companyName: input.companyName,
+      unitName: input.unitName,
       acceptUrl: `${this.config.get<string>('webAppUrl')}/accept-invitation?token=${input.token}`,
       expiresInHours: this.config.get<number>('invitationTtlHours')!,
     });
     await this.enqueueStandalone({
       eventType: EmailEventType.USER_INVITED,
-      to: input.to,
-      ...rendered,
-    });
-  }
-
-  async enqueueCompanyInvitation(input: {
-    to: string;
-    inviterName: string;
-    inviterCompanyName: string;
-    invitedCompanyName: string;
-    token: string;
-  }): Promise<void> {
-    const rendered = renderCompanyInvitation({
-      inviterName: input.inviterName,
-      inviterCompanyName: input.inviterCompanyName,
-      invitedCompanyName: input.invitedCompanyName,
-      acceptUrl: `${this.config.get<string>('webAppUrl')}/accept-invitation?token=${input.token}`,
-      expiresInHours: this.config.get<number>('invitationTtlHours')!,
-    });
-    await this.enqueueStandalone({
-      eventType: EmailEventType.COMPANY_INVITED,
       to: input.to,
       ...rendered,
     });

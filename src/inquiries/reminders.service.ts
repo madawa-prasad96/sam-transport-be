@@ -45,7 +45,7 @@ export class RemindersService {
         submittedAt: { lte: cutoff },
         lastReminderAt: null,
       },
-      include: { providerCompany: true },
+      include: { providerUnit: true },
       take: 100,
     });
 
@@ -83,15 +83,15 @@ export class RemindersService {
         submittedAt: { lte: cutoff },
         lastReminderAt: { not: null, lte: cutoff },
       },
-      include: { providerCompany: true, requesterCompany: true },
+      include: { providerUnit: true, requesterUnit: true },
       take: 100,
     });
 
     for (const inquiry of overdue) {
       const admins = await this.prisma.user.findMany({
         where: {
-          companyId: inquiry.providerCompanyId,
-          role: UserRole.COMPANY_ADMIN,
+          unitId: inquiry.providerUnitId,
+          role: UserRole.UNIT_ADMIN,
           status: UserStatus.ACTIVE,
         },
       });
@@ -101,8 +101,8 @@ export class RemindersService {
           eventType: EmailEventType.NO_RESPONSE_REMINDER,
           to: admin.email,
           subject: `Escalation: ${inquiry.number} has had no response for ${hours} hours`,
-          html: `<p><strong>${inquiry.number}</strong> from ${inquiry.requesterCompany.name} has been awaiting vehicle details for over ${hours} hours.</p><p>Required by ${inquiry.requiredByAt.toISOString()}.</p><p><a href="${this.config.get<string>('webAppUrl')}/inquiries/${inquiry.id}">Open the inquiry</a></p>`,
-          text: `${inquiry.number} from ${inquiry.requesterCompany.name} has been awaiting vehicle details for over ${hours} hours.\nRequired by ${inquiry.requiredByAt.toISOString()}.\n\n${this.config.get<string>('webAppUrl')}/inquiries/${inquiry.id}`,
+          html: `<p><strong>${inquiry.number}</strong> from ${inquiry.requesterUnit.name} has been awaiting vehicle details for over ${hours} hours.</p><p>Required by ${inquiry.requiredByAt.toISOString()}.</p><p><a href="${this.config.get<string>('webAppUrl')}/inquiries/${inquiry.id}">Open the inquiry</a></p>`,
+          text: `${inquiry.number} from ${inquiry.requesterUnit.name} has been awaiting vehicle details for over ${hours} hours.\nRequired by ${inquiry.requiredByAt.toISOString()}.\n\n${this.config.get<string>('webAppUrl')}/inquiries/${inquiry.id}`,
         });
       }
 

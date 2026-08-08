@@ -4,16 +4,28 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
+  MaxLength,
 } from 'class-validator';
-import { WeightUom } from '../../generated/prisma/enums';
+import { UnitStatus, WeightUom } from '../../generated/prisma/enums';
 
-export class RegisterCompanyDto {
+export class CreateUnitDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(200)
   name!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  @Matches(/^[A-Za-z0-9_-]+$/, {
+    message: 'Code may contain letters, numbers, hyphens and underscores only',
+  })
+  code!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   registrationNumber?: string;
 
   @IsString()
@@ -44,10 +56,17 @@ export class RegisterCompanyDto {
   defaultWeightUom?: WeightUom;
 }
 
-export class UpdateCompanyDto {
+export class UpdateUnitDto {
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  @Matches(/^[A-Za-z0-9_-]+$/)
+  code?: string;
 
   @IsOptional()
   @IsString()
@@ -75,13 +94,14 @@ export class UpdateCompanyDto {
 
   @IsOptional()
   @IsString()
-  logoUrl?: string;
-
-  @IsOptional()
-  @IsString()
   timezone?: string;
 
   @IsOptional()
   @IsEnum(WeightUom)
   defaultWeightUom?: WeightUom;
+}
+
+export class SetUnitStatusDto {
+  @IsEnum(UnitStatus)
+  status!: UnitStatus;
 }

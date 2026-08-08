@@ -5,11 +5,10 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
-import { CompaniesModule } from './companies/companies.module';
+import { UnitsModule } from './units/units.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import configuration from './config/configuration';
-import { ConnectionsModule } from './connections/connections.module';
 import { InboundModule } from './inbound/inbound.module';
 import { InquiriesModule } from './inquiries/inquiries.module';
 import { HealthController } from './health/health.controller';
@@ -26,9 +25,8 @@ import { UsersModule } from './users/users.module';
     AuditModule,
     MailModule,
     AuthModule,
-    CompaniesModule,
+    UnitsModule,
     UsersModule,
-    ConnectionsModule,
     InquiriesModule,
     InboundModule,
   ],

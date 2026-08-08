@@ -191,14 +191,14 @@ export class InboundService {
     return { result: 'posted', commentId: comment.id, inquiryId: inquiry.id };
   }
 
-  async listQuarantined(companyId: string) {
+  async listQuarantined(unitId: string) {
     return this.prisma.inboundEmail.findMany({
       where: {
         status: InboundEmailStatus.QUARANTINED,
         inquiry: {
           OR: [
-            { requesterCompanyId: companyId },
-            { providerCompanyId: companyId },
+            { requesterUnitId: unitId },
+            { providerUnitId: unitId },
           ],
         },
       },
@@ -209,14 +209,14 @@ export class InboundService {
     });
   }
 
-  async discardQuarantined(companyId: string, id: string) {
+  async discardQuarantined(unitId: string, id: string) {
     const record = await this.prisma.inboundEmail.findFirst({
       where: {
         id,
         inquiry: {
           OR: [
-            { requesterCompanyId: companyId },
-            { providerCompanyId: companyId },
+            { requesterUnitId: unitId },
+            { providerUnitId: unitId },
           ],
         },
       },

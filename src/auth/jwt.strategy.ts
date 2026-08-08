@@ -32,20 +32,20 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
   /**
    * The DB lookup on every request is deliberate: it means deactivating a user
-   * or suspending a company takes effect immediately rather than when their
+   * or deactivating a unit takes effect immediately rather than when their
    * access token happens to expire.
    */
   async validate(payload: JwtPayload): Promise<AuthUser> {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      include: { company: true },
+      include: { unit: true },
     });
 
     if (!user || user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException('Account is not active');
     }
-    if (user.company && user.company.status === 'SUSPENDED') {
-      throw new UnauthorizedException('Company is suspended');
+    if (user.unit.status !== 'ACTIVE') {
+      throw new UnauthorizedException('Your unit is not active');
     }
 
     return {
@@ -53,7 +53,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       email: user.email,
       fullName: user.fullName,
       role: user.role,
-      companyId: user.companyId,
+      unitId: user.unitId,
     };
   }
 }
