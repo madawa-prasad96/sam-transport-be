@@ -6,7 +6,13 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs'],
+    ignores: [
+      'eslint.config.mjs',
+      'dist/**',
+      // Prisma rewrites this on every `db:generate`, so linting it is pointless
+      // — and CI regenerates it unformatted, failing on code nobody wrote.
+      'src/generated/**',
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
