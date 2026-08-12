@@ -1,0 +1,23 @@
+# Anything listed here is invisible to the build. Two reasons that matters:
+# secrets can't leak into an image layer, and the build context stays small.
+
+node_modules
+dist
+coverage
+src/generated
+
+# Never let a real credential into the build context.
+.env
+.env.*
+
+.git
+.gitignore
+storage
+test
+*.log
+.DS_Store
+.vscode
+.idea
+Dockerfile
+.dockerignore
+README.md
