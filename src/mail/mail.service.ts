@@ -109,8 +109,7 @@ export class MailService {
       : bcc.length && !cc.length
         ? bcc.map((r) => r.email)
         : [];
-    const bccAddresses =
-      to.length || cc.length ? bcc.map((r) => r.email) : [];
+    const bccAddresses = to.length || cc.length ? bcc.map((r) => r.email) : [];
 
     const rendered = renderInquiryEmail(input.eventType, {
       inquiryNumber: inquiry.number,

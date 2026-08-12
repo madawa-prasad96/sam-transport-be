@@ -30,7 +30,9 @@ jobs:
         env:
           DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
 
-      - run: pnpm lint
+      # lint:ci omits --fix. CI must fail on a violation, not quietly rewrite
+      # files in a checkout that gets thrown away.
+      - run: pnpm lint:ci
       - run: pnpm build
       - run: pnpm test
 

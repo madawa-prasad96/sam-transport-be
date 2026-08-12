@@ -8,10 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { JwtSignOptions } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { AuthUser } from '../common/decorators/current-user.decorator';
-import {
-  generateOpaqueToken,
-  hashToken,
-} from '../common/utils/tokens';
+import { generateOpaqueToken, hashToken } from '../common/utils/tokens';
 import {
   InvitationStatus,
   UnitStatus,

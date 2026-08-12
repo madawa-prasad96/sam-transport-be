@@ -24,8 +24,7 @@ import { SmtpTransport } from './transports/smtp.transport';
         config: ConfigService,
         smtp: SmtpTransport,
         resend: ResendTransport,
-      ) =>
-        config.get<string>('mail.transport') === 'resend' ? resend : smtp,
+      ) => (config.get<string>('mail.transport') === 'resend' ? resend : smtp),
     },
   ],
   exports: [MailService, MailTokenService],

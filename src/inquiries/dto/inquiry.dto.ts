@@ -73,7 +73,11 @@ export class CreateInquiryDto {
   @IsInt() @Min(1) @Type(() => Number) packageCount!: number;
   @IsNumber() @IsPositive() @Type(() => Number) grossWeight!: number;
   @IsOptional() @IsEnum(WeightUom) weightUom?: WeightUom;
-  @IsOptional() @IsNumber() @IsPositive() @Type(() => Number) volumeCbm?: number;
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  @Type(() => Number)
+  volumeCbm?: number;
   @IsOptional() @IsString() dimensions?: string;
   @IsOptional() @IsEnum(PackagingType) packagingType?: PackagingType;
 
@@ -96,9 +100,17 @@ export class UpdateInquiryDto {
   @IsOptional() @IsDateString() requiredByAt?: string;
   @IsOptional() @IsString() @MaxLength(2000) cargoDescription?: string;
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) packageCount?: number;
-  @IsOptional() @IsNumber() @IsPositive() @Type(() => Number) grossWeight?: number;
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  @Type(() => Number)
+  grossWeight?: number;
   @IsOptional() @IsEnum(WeightUom) weightUom?: WeightUom;
-  @IsOptional() @IsNumber() @IsPositive() @Type(() => Number) volumeCbm?: number;
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  @Type(() => Number)
+  volumeCbm?: number;
   @IsOptional() @IsString() dimensions?: string;
   @IsOptional() @IsEnum(PackagingType) packagingType?: PackagingType;
   @IsOptional() @IsEnum(VehicleType) requestedVehicleType?: VehicleType;

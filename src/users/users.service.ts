@@ -74,9 +74,7 @@ export class UsersService {
     const email = dto.email.toLowerCase().trim();
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing && existing.status !== UserStatus.INVITED) {
-      throw new BadRequestException(
-        'A user with that email already exists',
-      );
+      throw new BadRequestException('A user with that email already exists');
     }
 
     const token = generateOpaqueToken();

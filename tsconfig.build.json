@@ -4,7 +4,11 @@
     // Without this, prisma.config.ts and prisma/seed.ts at the repo root widen
     // tsc's common source directory and the build lands in dist/src/ instead of
     // dist/ — which breaks `node dist/main`.
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // Keep the incremental cache inside dist/ so nest-cli's deleteOutDir clears
+    // it too. Left at the repo root it survives the wipe, and the next build
+    // silently emits nothing because tsc thinks the output is current.
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]

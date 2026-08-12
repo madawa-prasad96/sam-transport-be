@@ -17,7 +17,9 @@ const escape = (value: string): string =>
     .replace(/"/g, '&quot;');
 
 export const rows = (items: DetailRow[]): DetailRow[] =>
-  items.filter((row) => row.value !== null && row.value !== undefined && row.value !== '');
+  items.filter(
+    (row) => row.value !== null && row.value !== undefined && row.value !== '',
+  );
 
 export const detailTableHtml = (items: DetailRow[]): string => {
   const body = rows(items)

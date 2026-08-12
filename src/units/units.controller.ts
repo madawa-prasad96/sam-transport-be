@@ -13,11 +13,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UnitStatus, UserRole } from '../generated/prisma/enums';
-import {
-  CreateUnitDto,
-  SetUnitStatusDto,
-  UpdateUnitDto,
-} from './dto/unit.dto';
+import { CreateUnitDto, SetUnitStatusDto, UpdateUnitDto } from './dto/unit.dto';
 import { UnitsService } from './units.service';
 
 @Controller('units')

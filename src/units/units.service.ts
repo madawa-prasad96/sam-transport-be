@@ -65,8 +65,18 @@ export class UnitsService {
         ...(params.search
           ? {
               OR: [
-                { name: { contains: params.search, mode: 'insensitive' as const } },
-                { code: { contains: params.search, mode: 'insensitive' as const } },
+                {
+                  name: {
+                    contains: params.search,
+                    mode: 'insensitive' as const,
+                  },
+                },
+                {
+                  code: {
+                    contains: params.search,
+                    mode: 'insensitive' as const,
+                  },
+                },
               ],
             }
           : {}),
@@ -141,7 +151,9 @@ export class UnitsService {
         ...dto,
         ...(dto.code ? { code: dto.code.toUpperCase().trim() } : {}),
         ...(dto.primaryContactEmail
-          ? { primaryContactEmail: dto.primaryContactEmail.toLowerCase().trim() }
+          ? {
+              primaryContactEmail: dto.primaryContactEmail.toLowerCase().trim(),
+            }
           : {}),
       },
     });

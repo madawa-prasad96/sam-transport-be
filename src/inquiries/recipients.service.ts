@@ -31,7 +31,7 @@ export class RecipientsService {
   ) {}
 
   async add(user: AuthUser, inquiryId: string, input: AddRecipientInput) {
-    const unitId = user.unitId!;
+    const unitId = user.unitId;
     const inquiry = await this.requireAccess(unitId, inquiryId);
 
     if (input.type === RecipientType.TO) {
@@ -55,9 +55,7 @@ export class RecipientsService {
       where: { inquiryId_email: { inquiryId, email } },
     });
     if (existing && !existing.removedAt) {
-      throw new BadRequestException(
-        'That address is already on this inquiry',
-      );
+      throw new BadRequestException('That address is already on this inquiry');
     }
 
     // A registered user gets linked so their notification preference and
@@ -139,7 +137,7 @@ export class RecipientsService {
   }
 
   async remove(user: AuthUser, inquiryId: string, recipientId: string) {
-    const unitId = user.unitId!;
+    const unitId = user.unitId;
     await this.requireAccess(unitId, inquiryId);
 
     const recipient = await this.prisma.recipient.findFirst({

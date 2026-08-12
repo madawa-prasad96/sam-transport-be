@@ -53,7 +53,9 @@ export class ResendTransport implements MailTransport {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`Resend rejected the message (${response.status}): ${body}`);
+      throw new Error(
+        `Resend rejected the message (${response.status}): ${body}`,
+      );
     }
 
     const data = (await response.json()) as { id?: string };

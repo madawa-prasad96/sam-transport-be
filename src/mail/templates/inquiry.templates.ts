@@ -24,7 +24,10 @@ export interface InquiryEmailContext {
 
 const copy: Record<
   string,
-  { heading: (c: InquiryEmailContext) => string; intro: (c: InquiryEmailContext) => string }
+  {
+    heading: (c: InquiryEmailContext) => string;
+    intro: (c: InquiryEmailContext) => string;
+  }
 > = {
   INQUIRY_SUBMITTED: {
     heading: (c) => `New transport inquiry ${c.inquiryNumber}`,
@@ -118,7 +121,8 @@ export const renderInquiryEmail = (
       heading,
       intro,
       bodyText:
-        (ctx.message ? `${ctx.message}\n\n` : '') + detailTableText(ctx.details),
+        (ctx.message ? `${ctx.message}\n\n` : '') +
+        detailTableText(ctx.details),
       actionLabel: 'Open inquiry',
       actionUrl: ctx.inquiryUrl,
     }),
@@ -155,4 +159,3 @@ export const renderUserInvitation = (ctx: {
     }),
   };
 };
-

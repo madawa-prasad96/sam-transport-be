@@ -10,11 +10,7 @@ import {
 import { MailService } from '../mail/mail.service';
 import { MailTokenService } from '../mail/mail-token.service';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  extractAddress,
-  isAutoReply,
-  stripQuotedText,
-} from './reply-parser';
+import { extractAddress, isAutoReply, stripQuotedText } from './reply-parser';
 
 export interface InboundEmailPayload {
   to: string;
@@ -196,10 +192,7 @@ export class InboundService {
       where: {
         status: InboundEmailStatus.QUARANTINED,
         inquiry: {
-          OR: [
-            { requesterUnitId: unitId },
-            { providerUnitId: unitId },
-          ],
+          OR: [{ requesterUnitId: unitId }, { providerUnitId: unitId }],
         },
       },
       include: {
@@ -214,10 +207,7 @@ export class InboundService {
       where: {
         id,
         inquiry: {
-          OR: [
-            { requesterUnitId: unitId },
-            { providerUnitId: unitId },
-          ],
+          OR: [{ requesterUnitId: unitId }, { providerUnitId: unitId }],
         },
       },
     });

@@ -101,7 +101,10 @@ export class InquiriesService {
    * or cancelling belongs to the units actually party to the inquiry, so the
    * audit trail always names a real participant.
    */
-  private assertIsParty(inquiry: { requesterUnitId: string; providerUnitId: string }, user: AuthUser) {
+  private assertIsParty(
+    inquiry: { requesterUnitId: string; providerUnitId: string },
+    user: AuthUser,
+  ) {
     if (
       inquiry.requesterUnitId !== user.unitId &&
       inquiry.providerUnitId !== user.unitId
@@ -117,7 +120,7 @@ export class InquiriesService {
   // -------------------------------------------------------------------------
 
   async list(user: AuthUser, query: ListInquiriesDto) {
-        const page = query.page ?? 1;
+    const page = query.page ?? 1;
     const pageSize = Math.min(query.pageSize ?? 25, 100);
 
     const filters: Record<string, unknown>[] = [this.scope(user)];
@@ -284,8 +287,7 @@ export class InquiriesService {
     user: AuthUser,
   ) {
     return recipients.map((recipient) =>
-      recipient.type === RecipientType.BCC &&
-      user.role === UserRole.UNIT_USER
+      recipient.type === RecipientType.BCC && user.role === UserRole.UNIT_USER
         ? { ...recipient, email: 'hidden' }
         : recipient,
     );
@@ -296,10 +298,7 @@ export class InquiriesService {
   // -------------------------------------------------------------------------
 
   async create(user: AuthUser, dto: CreateInquiryDto) {
-    await this.units.assertAddressable(
-      user.unitId,
-      dto.providerUnitId,
-    );
+    await this.units.assertAddressable(user.unitId, dto.providerUnitId);
     this.assertTimingSane(dto.readyByAt, dto.requiredByAt);
 
     // Validate copied recipients before creating anything. Attaching them after
@@ -357,14 +356,19 @@ export class InquiriesService {
       await this.recipients.add(user, inquiry.id, {
         email: copy.email,
         name: copy.name,
-        type: copy.type as RecipientType,
+        type: copy.type,
       });
     }
 
-    await this.recordEvent(inquiry.id, TimelineEventType.INQUIRY_CREATED, user, {
-      number: inquiry.number,
-      copiedRecipients: copies.length,
-    });
+    await this.recordEvent(
+      inquiry.id,
+      TimelineEventType.INQUIRY_CREATED,
+      user,
+      {
+        number: inquiry.number,
+        copiedRecipients: copies.length,
+      },
+    );
     await this.audit.record({
       action: 'inquiry.created',
       entityType: 'Inquiry',
@@ -413,7 +417,7 @@ export class InquiriesService {
     );
 
     const changes = this.diff(
-      inquiry as unknown as Record<string, unknown>,
+      inquiry,
       dto as unknown as Record<string, unknown>,
     );
     if (Object.keys(changes).length === 0) return inquiry;
@@ -451,7 +455,7 @@ export class InquiriesService {
         actorUnitName: inquiry.requesterUnit.name,
         details: Object.entries(changes).map(([field, value]) => ({
           label: this.humanise(field),
-          value: `${(value as { from: unknown }).from} → ${(value as { to: unknown }).to}`,
+          value: `${this.stringify(value.from)} → ${this.stringify(value.to)}`,
         })),
       });
     }
@@ -463,7 +467,9 @@ export class InquiriesService {
     const inquiry = await this.requireAccess(user, inquiryId);
 
     if (inquiry.requesterUnitId !== user.unitId) {
-      throw new ForbiddenException('Only the requesting unit can submit this inquiry');
+      throw new ForbiddenException(
+        'Only the requesting unit can submit this inquiry',
+      );
     }
     if (
       inquiry.status !== InquiryStatus.DRAFT &&
@@ -475,10 +481,7 @@ export class InquiriesService {
     }
     // A declined inquiry can be re-submitted, but not to a company we've since
     // been disconnected from.
-    await this.units.assertAddressable(
-      user.unitId,
-      inquiry.providerUnitId,
-    );
+    await this.units.assertAddressable(user.unitId, inquiry.providerUnitId);
 
     const isResubmission = inquiry.status === InquiryStatus.DECLINED;
 
@@ -614,7 +617,9 @@ export class InquiriesService {
     });
 
     await this.audit.record({
-      action: isRevision ? 'inquiry.vehicle_updated' : 'inquiry.vehicle_provided',
+      action: isRevision
+        ? 'inquiry.vehicle_updated'
+        : 'inquiry.vehicle_provided',
       entityType: 'VehicleDetail',
       entityId: detail.id,
       actorUserId: user.id,
@@ -886,7 +891,11 @@ export class InquiriesService {
       const email = entry.email.toLowerCase().trim();
       if (!email || seen.has(email)) continue;
       seen.add(email);
-      result.push({ email, name: entry.name?.trim() || undefined, type: entry.type });
+      result.push({
+        email,
+        name: entry.name?.trim() || undefined,
+        type: entry.type,
+      });
     }
     return result;
   }
@@ -947,11 +956,14 @@ export class InquiriesService {
       const normalisedPrevious =
         previous instanceof Date ? previous.toISOString() : previous;
       const normalisedNext =
-        typeof value === 'string' && !Number.isNaN(Date.parse(value)) &&
+        typeof value === 'string' &&
+        !Number.isNaN(Date.parse(value)) &&
         previous instanceof Date
           ? new Date(value).toISOString()
           : value;
-      if (String(normalisedPrevious) !== String(normalisedNext)) {
+      if (
+        this.stringify(normalisedPrevious) !== this.stringify(normalisedNext)
+      ) {
         changes[key] = { from: normalisedPrevious, to: normalisedNext };
       }
     }
@@ -996,6 +1008,33 @@ export class InquiriesService {
       },
       { label: 'Special handling', value: inquiry.specialHandlingNotes },
     ];
+  }
+
+  /**
+   * Renders an arbitrary field value as a string. Diff values are `unknown`, so
+   * they can't go straight into a template literal — and an object dropped into
+   * one stringifies to the useless `[object Object]`.
+   */
+  private stringify(value: unknown): string {
+    if (value === null || value === undefined) return String(value);
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'string') return value;
+    if (
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      typeof value === 'bigint'
+    ) {
+      return value.toString();
+    }
+    if (typeof value === 'object') {
+      // Prisma's Decimal (grossWeight, volumeCbm) is an object with a real
+      // toString. JSON.stringify would render its internals instead of "1200".
+      const candidate = value as { toString: () => string };
+      return candidate.toString === Object.prototype.toString
+        ? JSON.stringify(value)
+        : candidate.toString();
+    }
+    return JSON.stringify(value) ?? '';
   }
 
   private humanise(value: string): string {

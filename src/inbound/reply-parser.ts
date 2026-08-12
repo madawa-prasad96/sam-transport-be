@@ -48,7 +48,10 @@ export const stripQuotedText = (raw: string): ParsedReply => {
     if (/^\s*>/.test(line)) {
       let run = 0;
       let j = i;
-      while (j < lines.length && (/^\s*>/.test(lines[j]) || lines[j].trim() === '')) {
+      while (
+        j < lines.length &&
+        (/^\s*>/.test(lines[j]) || lines[j].trim() === '')
+      ) {
         if (/^\s*>/.test(lines[j])) run += 1;
         j += 1;
       }
@@ -85,7 +88,9 @@ export const extractAddress = (value: string): string => {
 };
 
 /** True when the message looks like an autoresponder — never post those. */
-export const isAutoReply = (headers: Record<string, string | undefined>): boolean => {
+export const isAutoReply = (
+  headers: Record<string, string | undefined>,
+): boolean => {
   const get = (name: string) =>
     headers[name] ?? headers[name.toLowerCase()] ?? '';
 

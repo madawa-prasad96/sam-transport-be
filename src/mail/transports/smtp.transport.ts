@@ -36,7 +36,9 @@ export class SmtpTransport implements MailTransport {
     // message itself carries just the visible To/Cc headers.
     const envelopeTo = [...message.to, ...message.cc, ...message.bcc];
 
-    const info = await this.transporter.sendMail({
+    // nodemailer types sendMail's result as `any`, which trips the type-aware
+    // lint rules. Narrow it to the one field actually used.
+    const info = (await this.transporter.sendMail({
       from: message.from,
       to: message.to.length ? message.to : undefined,
       cc: message.cc.length ? message.cc : undefined,
@@ -51,7 +53,7 @@ export class SmtpTransport implements MailTransport {
       messageId: message.messageId,
       inReplyTo: message.inReplyTo ?? undefined,
       references: message.references ?? undefined,
-    });
+    })) as { messageId?: string };
 
     this.logger.debug(`Sent ${message.messageId} via SMTP`);
     return { providerMessageId: info.messageId };
